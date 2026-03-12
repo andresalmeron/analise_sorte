@@ -27,7 +27,6 @@ def ler_arquivo(arquivo, sep_default=';'):
             if hasattr(arquivo, 'seek'): arquivo.seek(0)
             df = pd.read_csv(arquivo, sep=sep_default, encoding='latin-1')
     else:
-        # Quando o upload for Excel, lê nativamente
         df = pd.read_excel(arquivo)
         
     if df.shape[1] < 2:
@@ -210,36 +209,50 @@ if arquivo_upload is not None:
         caminhos_acumulados = np.cumprod(simulacoes_retornos + 1, axis=0)
         caminhos_acumulados = np.vstack([np.ones(num_simulacoes), caminhos_acumulados])
         
-        trajetoria_media = np.mean(caminhos_acumulados, axis=1)
+        # 1. Túnel de Probabilidade (5% a 95% mês a mês)
+        percentil_5 = np.percentile(caminhos_acumulados, 5, axis=1)
+        percentil_95 = np.percentile(caminhos_acumulados, 95, axis=1)
+        
+        # 2. Média Aparada Bilateral (95% do centro)
+        resultado_final = caminhos_acumulados[-1, :]
+        limite_inf = np.percentile(resultado_final, 2.5)
+        limite_sup = np.percentile(resultado_final, 97.5)
+        mascara_aparada = (resultado_final >= limite_inf) & (resultado_final <= limite_sup)
+        caminhos_aparados = caminhos_acumulados[:, mascara_aparada]
+        trajetoria_media_aparada = np.mean(caminhos_aparados, axis=1)
+        
+        # 3. Mediana (P50)
         trajetoria_mediana = np.median(caminhos_acumulados, axis=1)
         
-        limite_percentil = np.percentile(caminhos_acumulados[-1, :], 95.45)
-        mascara_qualificados = caminhos_acumulados[-1, :] <= limite_percentil
-        caminhos_qualificados = caminhos_acumulados[:, mascara_qualificados]
-        trajetoria_media_qualificada = np.mean(caminhos_qualificados, axis=1)
-        
+        # Trajetória real (Histórico do gestor)
         trajetoria_real = np.cumprod(ret_fundo + 1)
         trajetoria_real = np.insert(trajetoria_real, 0, 1.0)
         
         fig, ax = plt.subplots(figsize=(12, 6))
         eixo_x = np.arange(n_meses + 1)
         
-        ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
-        ax.plot(eixo_x, trajetoria_media, color='#E67E22', linestyle='--', linewidth=2.5, label='Média Bruta (Simulação - Distorcida)')
-        ax.plot(eixo_x, trajetoria_media_qualificada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Qualificada (95,45% Justo)')
-        ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana Simulação (P50 Sistemático)')
+        # Plotando alguns universos paralelos leves ao fundo (opcional, para dar textura)
+        ax.plot(eixo_x, caminhos_acumulados[:, :300], color='lightgray', alpha=0.1)
+        
+        # Plot do Túnel Sombreado
+        ax.fill_between(eixo_x, percentil_5, percentil_95, color='#BDC3C7', alpha=0.4, label='Túnel de Probabilidade (90% dos Cenários)')
+        
+        # Linhas Centrais e Realidade
+        ax.plot(eixo_x, trajetoria_media_aparada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Aparada (95% Central)')
+        ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana Simulação (P50)')
         ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real (Gestor)')
         
-        teto_simulado = np.percentile(caminhos_acumulados[-1, :], 99)
+        # Ajuste de Eixos
+        teto_simulado = np.max(percentil_95)
         teto_real = np.max(trajetoria_real)
-        limite_superior = max(teto_simulado, teto_real) * 1.05 
+        limite_superior = max(teto_simulado, teto_real) * 1.10 
         
         ax.set_ylim(bottom=0, top=limite_superior)
         ax.set_title(f'Trajetória Real vs. {num_simulacoes} Universos (Beta Sistêmico + Resíduo)', fontsize=14)
         ax.set_ylabel('Fator de Crescimento do Capital')
         ax.set_xlabel('Meses Alocados')
         ax.grid(axis='y', linestyle='--', alpha=0.5)
-        ax.legend()
+        ax.legend(loc='upper left')
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(x).replace(',', '.')))
@@ -248,7 +261,8 @@ if arquivo_upload is not None:
     plt.close(fig)
     
     st.markdown("""
-    **Interpretação Baseada na EMH:**
-    * Como assumimos que o gestor opera inicialmente num mercado eficiente (zeramos o Alfa artificialmente), a simulação mostra o que aconteceria se ele fosse "apenas" um robô que roda no nível de Beta dele. 
-    * Se a linha azul espessa (**Trajetória Real**) se descolar persistentemente acima das linhas tracejadas, é o sinal mais claro e qualificado de que esse gestor tem habilidade legítima, não explicada pelo sobe-e-desce da maré.
+    **A Leitura do Modelo:**
+    * **O Túnel de Probabilidade (Área Cinza):** Compreende 90% dos universos possíveis. Se o gestor operasse como um mero "robô de mercado" ancorado no seu Beta histórico, a imensa maioria dos seus resultados cairia dentro dessa faixa.
+    * **Média Aparada & Mediana:** Mostram o centro de gravidade da simulação, excluindo eventos de cauda (os extremos de sorte ou azar absoluto). 
+    * **Avaliação de Habilidade:** Se a linha azul espessa (**Trajetória Real**) consegue escapar do Túnel de Probabilidade para cima ou sustenta-se de forma inquestionável acima das linhas centrais (verde e vermelha), o modelo nos diz que há evidências matemáticas robustas de **Alfa (Habilidade Real)**, que não podem ser explicadas pela flutuação do mercado livre de eficiência.
     """)
