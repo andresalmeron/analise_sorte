@@ -11,8 +11,8 @@ st.set_page_config(page_title="Sorte ou Habilidade? (Qualificado)", layout="wide
 @st.cache_data(ttl=86400) # Mantém a base em cache por 24 horas para evitar lentidão
 def carregar_benchmark_default():
     """Baixa a base do IBRX 100 diretamente do repositório no GitHub."""
-    # O link 'raw' aponta diretamente para o conteúdo do CSV
-    url_ibrx = "https://raw.githubusercontent.com/andresalmeron/analise_sorte/QUALIFICADO/preco%20-%20ibrx.xlsx%20-%20comdinheiro.csv"
+    # O link 'raw' aponta diretamente para o conteúdo do CSV com os espaços encodados
+    url_ibrx = "https://raw.githubusercontent.com/andresalmeron/analise_sorte/QUALIFICADO/preco%20-%20ibrx.csv"
     return pd.read_csv(url_ibrx, sep=',', encoding='utf-8')
 
 def ler_arquivo(arquivo, sep_default=';'):
