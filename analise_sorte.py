@@ -237,7 +237,49 @@ if arquivo_upload is not None:
         ax.plot(eixo_x, caminhos_acumulados[:, :300], color='lightgray', alpha=0.1)
         
         # Plot do Túnel Sombreado
-        ax.fill_between(eixo_x, percentil_5, percentil_95, color='#BDC3C7', alpha=0.4, label='Túnel de Probabilidade (90% dos Cenários)')
+        ax.fill_between(
+            eixo_x, percentil_5, percentil_95, 
+            color='#BDC3C7', alpha=0.4, 
+            label='Túnel de Probabilidade (90% dos Cenários)'
+        )
         
-        # Linhas Centrais e Realidade
-        ax.plot(eixo_x, trajetoria_media_aparada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Aparada (
+        # Linhas Centrais e Realidade - Quebradas para evitar erro de sintaxe
+        ax.plot(
+            eixo_x, trajetoria_media_aparada, 
+            color='#27AE60', linestyle='-.', linewidth=2.5, 
+            label='Média Aparada (95% Central)'
+        )
+        ax.plot(
+            eixo_x, trajetoria_mediana, 
+            color='#C0392B', linestyle=':', linewidth=2.5, 
+            label='Mediana Simulação (P50)'
+        )
+        ax.plot(
+            eixo_x, trajetoria_real, 
+            color='#004488', linewidth=3, 
+            label='Trajetória Real (Gestor)'
+        )
+        
+        teto_simulado = np.max(percentil_95)
+        teto_real = np.max(trajetoria_real)
+        limite_superior = max(teto_simulado, teto_real) * 1.10 
+        
+        ax.set_ylim(bottom=0, top=limite_superior)
+        ax.set_title(f'Trajetória Real vs. {num_simulacoes} Universos (Beta Sistêmico + Resíduo)', fontsize=14)
+        ax.set_ylabel('Fator de Crescimento do Capital')
+        ax.set_xlabel('Meses Alocados')
+        ax.grid(axis='y', linestyle='--', alpha=0.5)
+        ax.legend(loc='upper left')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(x).replace(',', '.')))
+        
+    st.pyplot(fig)
+    plt.close(fig)
+    
+    st.markdown("""
+    **A Leitura do Modelo:**
+    * **O Túnel de Probabilidade (Área Cinza):** Compreende 90% dos universos possíveis. Se o gestor operasse como um mero "robô de mercado" ancorado no seu Beta histórico, a imensa maioria dos seus resultados cairia dentro dessa faixa.
+    * **Média Aparada & Mediana:** Mostram o centro de gravidade da simulação, excluindo eventos de cauda (os extremos de sorte ou azar absoluto). 
+    * **Avaliação de Habilidade:** Se a linha azul espessa (**Trajetória Real**) consegue escapar do Túnel de Probabilidade para cima ou sustenta-se de forma inquestionável acima das linhas centrais (verde e vermelha), o modelo nos diz que há evidências matemáticas robustas de **Alfa (Habilidade Real)**, que não podem ser explicadas pela flutuação do mercado livre de eficiência.
+    """)
