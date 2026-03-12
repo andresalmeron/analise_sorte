@@ -80,7 +80,7 @@ if arquivo_upload is not None:
         st.subheader("Filtro de Período")
         
         # ==========================================================
-        # SELETOR DE DATAS MILIMÉTRICO
+        # SELETOR DE DATAS MILIMÉTRICO (Agora em janelas separadas)
         # ==========================================================
         min_date = df_completo['Data'].min().date()
         max_date = df_completo['Data'].max().date()
@@ -91,25 +91,35 @@ if arquivo_upload is not None:
             default_start = pd.to_datetime(max_date) - pd.DateOffset(years=10)
             default_start = default_start.date()
             
-        datas_selecionadas = st.date_input(
-            "Selecione o período de análise (Início e Fim):",
-            value=(default_start, max_date),
-            min_value=min_date,
-            max_value=max_date
-        )
+        col_inicio, col_fim = st.columns(2)
         
-        if len(datas_selecionadas) != 2:
-            st.warning("Por favor, selecione uma data de início e uma data de fim para continuar.")
-            st.stop()
+        with col_inicio:
+            data_inicio = st.date_input(
+                "Data Inicial:",
+                value=default_start,
+                min_value=min_date,
+                max_value=max_date
+            )
             
-        data_inicio, data_fim = datas_selecionadas
+        with col_fim:
+            data_fim = st.date_input(
+                "Data Final:",
+                value=max_date,
+                min_value=min_date,
+                max_value=max_date
+            )
+        
+        # Trava de segurança UX
+        if data_inicio >= data_fim:
+            st.error("⚠️ A Data Inicial deve ser obrigatoriamente anterior à Data Final.")
+            st.stop()
         
         # Recorta o dataframe com base na seleção precisa
         mask = (df_completo['Data'].dt.date >= data_inicio) & (df_completo['Data'].dt.date <= data_fim)
         df = df_completo.loc[mask].reset_index(drop=True)
         
         if len(df) < 2:
-            st.error("O período selecionado precisa ter pelo menos 2 meses de dados para o cálculo de retorno.")
+            st.error("⚠️ O período selecionado precisa ter pelo menos 2 meses de dados para o cálculo de retorno.")
             st.stop()
             
         df['Retorno'] = df['Cota'].pct_change()
