@@ -81,9 +81,6 @@ if arquivo_upload is not None:
         st.divider()
         st.subheader("Filtro de Período")
         
-        # ==========================================================
-        # SELETOR DE MÊS/ANO COM ATALHOS INTELIGENTES (UX)
-        # ==========================================================
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -94,10 +91,8 @@ if arquivo_upload is not None:
         
         with col2:
             opcoes_atalho = ["Personalizado", "Último 1 ano", "Últimos 3 anos", "Últimos 5 anos", "Últimos 10 anos", "Desde o Início"]
-            # Por padrão, trava em "Últimos 10 anos" para facilitar a primeira visualização
             atalho = st.selectbox("2. Janela de Tempo:", options=opcoes_atalho, index=4) 
             
-        # Motor de cálculo do atalho
         if atalho == "Último 1 ano": idx_ini_calc = max(0, idx_fim - 12)
         elif atalho == "Últimos 3 anos": idx_ini_calc = max(0, idx_fim - 36)
         elif atalho == "Últimos 5 anos": idx_ini_calc = max(0, idx_fim - 60)
@@ -111,7 +106,6 @@ if arquivo_upload is not None:
             else:
                 data_inicio_str = st.selectbox("3. Início (Automático):", options=[opcoes_datas[idx_ini_calc]], disabled=True)
                 
-        # Trava de segurança UX
         idx_ini_real = opcoes_datas.index(data_inicio_str)
         if idx_ini_real >= idx_fim:
             st.error("⚠️ O Mês/Ano Inicial deve ser obrigatoriamente anterior ao Mês/Ano Final.")
@@ -167,4 +161,47 @@ if arquivo_upload is not None:
             
             limite_percentil = np.percentile(caminhos_acumulados[-1, :], 95.45)
             mascara_qualificados = caminhos_acumulados[-1, :] <= limite_percentil
-            caminhos_qualificados = caminhos_acumulados[:, mascara_qualificados
+            caminhos_qualificados = caminhos_acumulados[:, mascara_qualificados]
+            trajetoria_media_qualificada = np.mean(caminhos_qualificados, axis=1)
+            
+            trajetoria_real = np.cumprod(retornos_historicos + 1)
+            trajetoria_real = np.insert(trajetoria_real, 0, 1.0)
+            
+            fig, ax = plt.subplots(figsize=(12, 6))
+            eixo_x = np.arange(n_meses + 1)
+            
+            ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
+            
+            ax.plot(eixo_x, trajetoria_media, color='#E67E22', linestyle='--', linewidth=2.5, label='Média Bruta (Distorcida por Outliers)')
+            ax.plot(eixo_x, trajetoria_media_qualificada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Qualificada (95,45% da Amostra)')
+            ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana (Cenário Base - P50)')
+            ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
+            
+            teto_simulado = np.percentile(caminhos_acumulados[-1, :], 99)
+            teto_real = np.max(trajetoria_real)
+            limite_superior = max(teto_simulado, teto_real) * 1.05 
+            
+            ax.set_ylim(bottom=0, top=limite_superior)
+            
+            ax.set_title(f'Trajetória Real vs. {num_simulacoes} Caminhos Aleatórios', fontsize=14)
+            ax.set_ylabel('Fator de Crescimento do Capital')
+            ax.set_xlabel('Meses Alocados (No período selecionado)')
+            ax.grid(axis='y', linestyle='--', alpha=0.5)
+            ax.legend()
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(x).replace(',', '.')))
+            
+        st.pyplot(fig)
+        plt.close(fig) 
+        
+        st.markdown("""
+        **A Leitura das Linhas:**
+        * **Média Bruta (Laranja):** É fortemente distorcida para cima pela assimetria dos juros compostos. Alguns poucos universos onde a sorte foi extrema empurram essa métrica para fora da realidade.
+        * **Média Qualificada (Verde):** Aqui removemos os universos de "ganho de loteria" (equivalente a cortar eventos acima de 2 desvios padrão). É um cenário-base muito mais justo e honesto para julgar a gestão.
+        * **Mediana (Vermelha):** Representa exatamente o meio da amostra (P50). Se a linha azul do fundo orbita próxima à Mediana e à Média Qualificada, o gestor apenas capturou o prêmio de risco sistemático esperado para a sua volatilidade, sem evidências inquestionáveis de consistência fora do acaso.
+        """)
+        
+    except Exception as e:
+        st.error(f"Erro fatal: {e}")
