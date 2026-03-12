@@ -5,7 +5,6 @@ import matplotlib
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import re
-from datetime import datetime
 
 st.set_page_config(page_title="Sorte ou Habilidade?", layout="wide")
 
@@ -54,7 +53,7 @@ def formatar_decimal_br(valor):
 
 st.title("Sorte ou Habilidade? O Teste da Aleatoriedade")
 st.markdown("""
-Esta ferramenta aplica testes estatísticos rigorosos para responder a uma pergunta fundamental na alocação de capital: **O retorno histórico de um fundo é fruto da genialidade do gestor ou apenas um passeio aleatório guiado pelo ruído do mercado?**
+Esta ferramenta aplica testes rigorosos para responder a uma pergunta fundamental na alocação de capital: **O retorno histórico de um fundo é fruto de habilidade extraordinária do gestor ou apenas um passeio aleatório ditado pelo ruído do mercado?**
 """)
 
 arquivo_upload = st.file_uploader("Faça o upload da planilha (Excel ou CSV da extração com os PREÇOS)", type=['csv', 'xlsx'])
@@ -76,46 +75,52 @@ if arquivo_upload is not None:
         df_completo = df_completo.dropna(subset=['Data', 'Cota'])
         df_completo = df_completo.sort_values('Data').reset_index(drop=True)
         
+        df_completo['MesAno_Str'] = df_completo['Data'].dt.strftime('%m/%Y')
+        opcoes_datas = df_completo['MesAno_Str'].drop_duplicates().tolist()
+        
         st.divider()
         st.subheader("Filtro de Período")
         
         # ==========================================================
-        # SELETOR DE DATAS MILIMÉTRICO (Agora em janelas separadas)
+        # SELETOR DE MÊS/ANO COM ATALHOS INTELIGENTES (UX)
         # ==========================================================
-        min_date = df_completo['Data'].min().date()
-        max_date = df_completo['Data'].max().date()
+        col1, col2, col3 = st.columns(3)
         
-        # Padrão: Sugere os últimos 10 anos, ou o mínimo disponível
-        default_start = min_date
-        if (max_date - min_date).days > 3650:
-            default_start = pd.to_datetime(max_date) - pd.DateOffset(years=10)
-            default_start = default_start.date()
+        with col1:
+            idx_fim_default = len(opcoes_datas) - 1
+            data_fim_str = st.selectbox("1. Escolha o Fim:", options=opcoes_datas, index=idx_fim_default)
             
-        col_inicio, col_fim = st.columns(2)
+        idx_fim = opcoes_datas.index(data_fim_str)
         
-        with col_inicio:
-            data_inicio = st.date_input(
-                "Data Inicial:",
-                value=default_start,
-                min_value=min_date,
-                max_value=max_date
-            )
+        with col2:
+            opcoes_atalho = ["Personalizado", "Último 1 ano", "Últimos 3 anos", "Últimos 5 anos", "Últimos 10 anos", "Desde o Início"]
+            # Por padrão, trava em "Últimos 10 anos" para facilitar a primeira visualização
+            atalho = st.selectbox("2. Janela de Tempo:", options=opcoes_atalho, index=4) 
             
-        with col_fim:
-            data_fim = st.date_input(
-                "Data Final:",
-                value=max_date,
-                min_value=min_date,
-                max_value=max_date
-            )
-        
+        # Motor de cálculo do atalho
+        if atalho == "Último 1 ano": idx_ini_calc = max(0, idx_fim - 12)
+        elif atalho == "Últimos 3 anos": idx_ini_calc = max(0, idx_fim - 36)
+        elif atalho == "Últimos 5 anos": idx_ini_calc = max(0, idx_fim - 60)
+        elif atalho == "Últimos 10 anos": idx_ini_calc = max(0, idx_fim - 120)
+        elif atalho == "Desde o Início": idx_ini_calc = 0
+        else: idx_ini_calc = max(0, idx_fim - 120)
+
+        with col3:
+            if atalho == "Personalizado":
+                data_inicio_str = st.selectbox("3. Escolha o Início:", options=opcoes_datas, index=idx_ini_calc)
+            else:
+                data_inicio_str = st.selectbox("3. Início (Automático):", options=[opcoes_datas[idx_ini_calc]], disabled=True)
+                
         # Trava de segurança UX
-        if data_inicio >= data_fim:
-            st.error("⚠️ A Data Inicial deve ser obrigatoriamente anterior à Data Final.")
+        idx_ini_real = opcoes_datas.index(data_inicio_str)
+        if idx_ini_real >= idx_fim:
+            st.error("⚠️ O Mês/Ano Inicial deve ser obrigatoriamente anterior ao Mês/Ano Final.")
             st.stop()
         
-        # Recorta o dataframe com base na seleção precisa
-        mask = (df_completo['Data'].dt.date >= data_inicio) & (df_completo['Data'].dt.date <= data_fim)
+        data_inicio = df_completo[df_completo['MesAno_Str'] == data_inicio_str]['Data'].min()
+        data_fim = df_completo[df_completo['MesAno_Str'] == data_fim_str]['Data'].max()
+        
+        mask = (df_completo['Data'] >= data_inicio) & (df_completo['Data'] <= data_fim)
         df = df_completo.loc[mask].reset_index(drop=True)
         
         if len(df) < 2:
@@ -133,7 +138,7 @@ if arquivo_upload is not None:
         retorno_anualizado = ((1 + retorno_medio_mensal) ** 12) - 1
         volatilidade_anualizada = volatilidade_mensal * np.sqrt(12)
         
-        st.subheader("1. Resumo da Amostra (Período Selecionado)")
+        st.subheader("1. Resumo da Amostra")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Período Analisado", f"{formatar_decimal_br(anos)} anos")
         col2.metric("Meses (N)", f"{n_meses}")
@@ -144,7 +149,7 @@ if arquivo_upload is not None:
 
         st.subheader("2. O Multiverso do Azar: Simulação de Monte Carlo")
         st.markdown(f"""
-        Se o mercado é um passeio aleatório, o que acontece se pegarmos todos os retornos mensais deste período específico ({data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}) e sortearmos a ordem deles 10.000 vezes? 
+        O que aconteceria se pegarmos todos os retornos mensais do fundo gerados entre **{data_inicio_str} e {data_fim_str}** e sortearmos a ordem deles 10.000 vezes? 
         """)
         
         num_simulacoes = 10000
@@ -162,47 +167,4 @@ if arquivo_upload is not None:
             
             limite_percentil = np.percentile(caminhos_acumulados[-1, :], 95.45)
             mascara_qualificados = caminhos_acumulados[-1, :] <= limite_percentil
-            caminhos_qualificados = caminhos_acumulados[:, mascara_qualificados]
-            trajetoria_media_qualificada = np.mean(caminhos_qualificados, axis=1)
-            
-            trajetoria_real = np.cumprod(retornos_historicos + 1)
-            trajetoria_real = np.insert(trajetoria_real, 0, 1.0)
-            
-            fig, ax = plt.subplots(figsize=(12, 6))
-            eixo_x = np.arange(n_meses + 1)
-            
-            ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
-            
-            ax.plot(eixo_x, trajetoria_media, color='#E67E22', linestyle='--', linewidth=2.5, label='Média Bruta (Distorcida por Outliers)')
-            ax.plot(eixo_x, trajetoria_media_qualificada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Qualificada (95,45% da Amostra)')
-            ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana (Cenário Base - P50)')
-            ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
-            
-            teto_simulado = np.percentile(caminhos_acumulados[-1, :], 99)
-            teto_real = np.max(trajetoria_real)
-            limite_superior = max(teto_simulado, teto_real) * 1.05 
-            
-            ax.set_ylim(bottom=0, top=limite_superior)
-            
-            ax.set_title(f'Trajetória Real vs. {num_simulacoes} Caminhos Aleatórios', fontsize=14)
-            ax.set_ylabel('Fator de Crescimento do Capital')
-            ax.set_xlabel('Meses Alocados (No período selecionado)')
-            ax.grid(axis='y', linestyle='--', alpha=0.5)
-            ax.legend()
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            
-            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(x).replace(',', '.')))
-            
-        st.pyplot(fig)
-        plt.close(fig) 
-        
-        st.markdown("""
-        **A Leitura das Linhas:**
-        * **Média Bruta (Laranja):** É fortemente distorcida para cima pela assimetria dos juros compostos. Alguns poucos universos onde a sorte foi extrema empurram essa métrica para fora da realidade.
-        * **Média Qualificada (Verde):** Aqui removemos os ~4,5% universos de "ganho de loteria" (equivalente a cortar eventos acima de 2 desvios padrão). É um cenário-base muito mais justo e honesto para julgar a gestão.
-        * **Mediana (Vermelha):** Representa exatamente o meio da amostra (P50). Se a linha azul do fundo orbita entre a Mediana e a Média Qualificada, o gestor entregou o prêmio de risco sistemático esperado, mas sem evidências de *stock picking* extraordinário.
-        """)
-        
-    except Exception as e:
-        st.error(f"Erro fatal: {e}")
+            caminhos_qualificados = caminhos_acumulados[:, mascara_qualificados
