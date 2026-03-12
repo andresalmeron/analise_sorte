@@ -131,10 +131,16 @@ if arquivo_upload is not None:
             caminhos_acumulados = np.vstack([np.ones(num_simulacoes), caminhos_acumulados]) 
             
             # ==========================================================
-            # CÁLCULO DA MÉDIA E MEDIANA DAS SIMULAÇÕES
+            # CÁLCULO DAS MÉTRICAS ESTATÍSTICAS
             # ==========================================================
             trajetoria_media = np.mean(caminhos_acumulados, axis=1)
             trajetoria_mediana = np.median(caminhos_acumulados, axis=1)
+            
+            # A Guilhotina de Outliers (95,45% ~ 2 Desvios Padrão)
+            limite_percentil = np.percentile(caminhos_acumulados[-1, :], 95.45)
+            mascara_qualificados = caminhos_acumulados[-1, :] <= limite_percentil
+            caminhos_qualificados = caminhos_acumulados[:, mascara_qualificados]
+            trajetoria_media_qualificada = np.mean(caminhos_qualificados, axis=1)
             
             trajetoria_real = np.cumprod(retornos_historicos + 1)
             trajetoria_real = np.insert(trajetoria_real, 0, 1.0)
@@ -142,15 +148,18 @@ if arquivo_upload is not None:
             fig, ax = plt.subplots(figsize=(12, 6))
             eixo_x = np.arange(n_meses + 1)
             
+            # Plota a nuvem
             ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
             
-            # Plota as métricas estatísticas sobrepostas
-            ax.plot(eixo_x, trajetoria_media, color='#E67E22', linestyle='--', linewidth=2.5, label='Média das Simulações')
-            ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana das Simulações (Cenário Base)')
+            # Plota as métricas
+            ax.plot(eixo_x, trajetoria_media, color='#E67E22', linestyle='--', linewidth=2.5, label='Média Bruta (Distorcida por Outliers)')
+            ax.plot(eixo_x, trajetoria_media_qualificada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Qualificada (95,45% da Amostra)')
+            ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana (Cenário Base - P50)')
             
-            # Plota a linha real por último para ficar em evidência
+            # Plota a linha real
             ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
             
+            # Escala do Eixo Y focada na legibilidade
             teto_simulado = np.percentile(caminhos_acumulados[-1, :], 99)
             teto_real = np.max(trajetoria_real)
             limite_superior = max(teto_simulado, teto_real) * 1.05 
@@ -171,9 +180,10 @@ if arquivo_upload is not None:
         plt.close(fig) 
         
         st.markdown("""
-        **A Diferença entre Média e Mediana:**
-        * Observe como a **Média (Laranja)** costuma descolar para cima da **Mediana (Vermelha)**. Isso ocorre pela assimetria dos juros compostos: os raríssimos cenários de "muita sorte" distorcem a média da amostra para cima.
-        * A **Mediana** representa o 50º percentil. É a âncora mais honesta para definir se o fundo apenas pegou "carona" no prêmio de risco do mercado ou se realmente entregou algo excepcional através do gestor.
+        **A Leitura das Linhas:**
+        * **Média Bruta (Laranja):** É fortemente distorcida para cima pela assimetria dos juros compostos. Alguns poucos universos onde a sorte foi extrema empurram essa métrica para fora da realidade.
+        * **Média Qualificada (Verde):** Aqui removemos os ~4,5% universos de "ganho de loteria" (equivalente a cortar eventos acima de 2 desvios padrão). É um cenário-base muito mais justo e honesto para julgar a gestão.
+        * **Mediana (Vermelha):** Representa exatamente o meio da amostra (P50). Se a linha azul do fundo orbita entre a Mediana e a Média Qualificada, o gestor entregou o prêmio de risco sistemático esperado, mas sem evidências de *stock picking* extraordinário.
         """)
             
         st.divider()
