@@ -5,9 +5,15 @@ import matplotlib
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import re
-import os
 
 st.set_page_config(page_title="Sorte ou Habilidade? (Qualificado)", layout="wide")
+
+@st.cache_data(ttl=86400) # Mantém a base em cache por 24 horas para evitar lentidão
+def carregar_benchmark_default():
+    """Baixa a base do IBRX 100 diretamente do repositório no GitHub."""
+    # O link 'raw' aponta diretamente para o conteúdo do CSV
+    url_ibrx = "https://raw.githubusercontent.com/andresalmeron/analise_sorte/QUALIFICADO/preco%20-%20ibrx.xlsx%20-%20comdinheiro.csv"
+    return pd.read_csv(url_ibrx, sep=',', encoding='utf-8')
 
 def ler_arquivo(arquivo, sep_default=';'):
     if getattr(arquivo, 'name', '').endswith('.csv') or (isinstance(arquivo, str) and arquivo.endswith('.csv')):
@@ -64,7 +70,7 @@ with col_up1:
 
 with col_up2:
     arquivo_bench = st.file_uploader("2. Upload do Benchmark Customizado (Opcional)", type=['csv', 'xlsx'])
-    st.caption("Se deixado em branco, usaremos o IBRX 100 padrão do sistema.")
+    st.caption("Se deixado em branco, usaremos o IBRX 100 padrão (via nuvem).")
 
 if arquivo_upload is not None:
     # --- Processamento do Fundo ---
@@ -80,12 +86,10 @@ if arquivo_upload is not None:
     if arquivo_bench is not None:
         df_bench_raw = ler_arquivo(arquivo_bench)
     else:
-        # Puxa o IBRX padrão no mesmo diretório do app
-        caminho_default = "preco - ibrx.xlsx - comdinheiro.csv"
-        if os.path.exists(caminho_default):
-            df_bench_raw = pd.read_csv(caminho_default)
-        else:
-            st.error(f"Arquivo de benchmark default não encontrado no caminho: {caminho_default}")
+        try:
+            df_bench_raw = carregar_benchmark_default()
+        except Exception as e:
+            st.error(f"⚠️ Erro ao acessar a base do IBRX no GitHub. Verifique sua conexão ou se o arquivo existe no repositório.\nDetalhes técnicos: {e}")
             st.stop()
     
     df_bench = df_bench_raw.loc[:, ~df_bench_raw.columns.str.contains('^Unnamed')].copy().iloc[:, :2]
@@ -161,7 +165,6 @@ if arquivo_upload is not None:
     anos = n_meses / 12
     
     # --- Regressão Linear: Fundo vs Mercado ---
-    # R_fundo = alpha + beta * R_bench + residuo
     ret_fundo = df['Retorno_Fundo'].values
     ret_bench = df['Retorno_Bench'].values
     
@@ -195,15 +198,12 @@ if arquivo_upload is not None:
     num_simulacoes = 10000
     
     with st.spinner('Gerando 10.000 universos governados pelo Beta e pela variância idiossincrática...'):
-        # Bootstrap: Realizamos um resampling com reposição (tanto para o mercado quanto para a "sorte")
         idx_mkt = np.random.randint(0, n_meses, size=(n_meses, num_simulacoes))
         idx_res = np.random.randint(0, n_meses, size=(n_meses, num_simulacoes))
         
         sim_mkt = ret_bench[idx_mkt]
         sim_res = residuos[idx_res]
         
-        # A Mágica do Monte Carlo Baseado em Fatores:
-        # Fundo Simulado = (Beta * Mercado Simulado) + Sorte do Mês
         simulacoes_retornos = beta * sim_mkt + sim_res
         
         caminhos_acumulados = np.cumprod(simulacoes_retornos + 1, axis=0)
@@ -212,20 +212,17 @@ if arquivo_upload is not None:
         trajetoria_media = np.mean(caminhos_acumulados, axis=1)
         trajetoria_mediana = np.median(caminhos_acumulados, axis=1)
         
-        # Filtro de cenários hiper distorcidos por juros compostos
         limite_percentil = np.percentile(caminhos_acumulados[-1, :], 95.45)
         mascara_qualificados = caminhos_acumulados[-1, :] <= limite_percentil
         caminhos_qualificados = caminhos_acumulados[:, mascara_qualificados]
         trajetoria_media_qualificada = np.mean(caminhos_qualificados, axis=1)
         
-        # Trajetória real (Histórico do gestor)
         trajetoria_real = np.cumprod(ret_fundo + 1)
         trajetoria_real = np.insert(trajetoria_real, 0, 1.0)
         
         fig, ax = plt.subplots(figsize=(12, 6))
         eixo_x = np.arange(n_meses + 1)
         
-        # Plotando alguns universos paralelos ao fundo
         ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
         ax.plot(eixo_x, trajetoria_media, color='#E67E22', linestyle='--', linewidth=2.5, label='Média Bruta (Simulação - Distorcida)')
         ax.plot(eixo_x, trajetoria_media_qualificada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Qualificada (95,45% Justo)')
