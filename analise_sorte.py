@@ -65,21 +65,43 @@ if arquivo_upload is not None:
         st.dataframe(df_raw.head())
 
     try:
-        df = df_raw.loc[:, ~df_raw.columns.str.contains('^Unnamed')].copy()
-        df = df.iloc[:, :2]
-        df.columns = ['Data', 'Cota']
+        df_completo = df_raw.loc[:, ~df_raw.columns.str.contains('^Unnamed')].copy()
+        df_completo = df_completo.iloc[:, :2]
+        df_completo.columns = ['Data', 'Cota']
         
-        df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
-        df['Cota'] = df['Cota'].apply(limpar_numero)
+        df_completo['Data'] = pd.to_datetime(df_completo['Data'], dayfirst=True, errors='coerce')
+        df_completo['Cota'] = df_completo['Cota'].apply(limpar_numero)
         
-        df = df.dropna(subset=['Data', 'Cota'])
+        df_completo = df_completo.dropna(subset=['Data', 'Cota'])
         
-        # Como a base é de preços, o pct_change calcula o retorno mês a mês.
-        # A primeira data observada se torna o "Mês 0" referencial para o investimento.
-        df = df.sort_values('Data').reset_index(drop=True)
-        df['Retorno'] = df['Cota'].pct_change()
+        df_completo = df_completo.sort_values('Data').reset_index(drop=True)
+        df_completo['Retorno'] = df_completo['Cota'].pct_change()
         
-        df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
+        df_completo = df_completo.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
+        
+        anos_disponiveis = len(df_completo) / 12
+        
+        st.divider()
+        st.subheader("Filtro de Período")
+        
+        # ==========================================================
+        # O SLIDER DE TEMPO
+        # Padrão definido para 10 anos (ou o máximo, se o fundo for novo)
+        # ==========================================================
+        max_anos_slider = int(np.ceil(anos_disponiveis))
+        valor_padrao = min(10, max_anos_slider)
+        
+        anos_analise = st.slider(
+            "Selecione o horizonte de análise (últimos X anos):",
+            min_value=1,
+            max_value=max_anos_slider,
+            value=valor_padrao,
+            step=1
+        )
+        
+        # Recorta o dataframe com base na seleção do usuário
+        meses_corte = anos_analise * 12
+        df = df_completo.tail(meses_corte).reset_index(drop=True)
         
         n_meses = len(df)
         anos = n_meses / 12
@@ -89,7 +111,7 @@ if arquivo_upload is not None:
         retorno_anualizado = ((1 + retorno_medio_mensal) ** 12) - 1
         volatilidade_anualizada = volatilidade_mensal * np.sqrt(12)
         
-        st.subheader("1. Resumo da Amostra")
+        st.subheader("1. Resumo da Amostra (Período Selecionado)")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Período Analisado", f"{formatar_decimal_br(anos)} anos")
         col2.metric("Meses (N)", f"{n_meses}")
@@ -99,8 +121,8 @@ if arquivo_upload is not None:
         st.divider()
 
         st.subheader("2. O Multiverso do Azar: Simulação de Monte Carlo")
-        st.markdown("""
-        Se o mercado é um passeio aleatório, o que acontece se pegarmos todos os retornos mensais deste fundo e **sortearmos a ordem deles 10.000 vezes**? 
+        st.markdown(f"""
+        Se o mercado é um passeio aleatório, o que acontece se pegarmos todos os retornos mensais dos últimos **{anos_analise} anos** e sortearmos a ordem deles 10.000 vezes? 
         """)
         
         num_simulacoes = 10000
@@ -111,7 +133,6 @@ if arquivo_upload is not None:
             simulacoes_retornos = retornos_historicos[indices_aleatorios]
             
             caminhos_acumulados = np.cumprod(simulacoes_retornos + 1, axis=0)
-            # Insere o Fator 1.0 como a âncora inicial (Mês 0) para todas as simulações
             caminhos_acumulados = np.vstack([np.ones(num_simulacoes), caminhos_acumulados]) 
             
             trajetoria_real = np.cumprod(retornos_historicos + 1)
@@ -123,17 +144,14 @@ if arquivo_upload is not None:
             ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
             ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
             
-            # ==========================================================
-            # CORTE DE ESCALA (Guilhotina Estatística)
-            # Corta o gráfico no P99 para focar no centro da distribuição
-            # ==========================================================
+            # A Guilhotina Estatística mantém a escala limpa
             teto_simulado = np.percentile(caminhos_acumulados[-1, :], 99)
             teto_real = np.max(trajetoria_real)
-            limite_superior = max(teto_simulado, teto_real) * 1.10 # Adiciona 10% de margem no topo
+            limite_superior = max(teto_simulado, teto_real) * 1.05 
             
             ax.set_ylim(bottom=0, top=limite_superior)
             
-            ax.set_title(f'Trajetória Real vs. {num_simulacoes} Caminhos Aleatórios', fontsize=14)
+            ax.set_title(f'Trajetória Real vs. {num_simulacoes} Caminhos Aleatórios ({anos_analise} anos)', fontsize=14)
             ax.set_ylabel('Fator de Crescimento do Capital')
             ax.set_xlabel('Meses Alocados')
             ax.grid(axis='y', linestyle='--', alpha=0.5)
@@ -141,7 +159,7 @@ if arquivo_upload is not None:
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             
-            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(x).replace(',', '.')))
             
         st.pyplot(fig)
         plt.close(fig) 
@@ -150,7 +168,7 @@ if arquivo_upload is not None:
 
         st.subheader("3. A Régua da Dúvida: Estatística T")
         st.markdown("""
-        A Estatística T traduz o gráfico acima em números: ela mede se o retorno excedente gerado foi forte o suficiente para romper a barreira do ruído e ser considerado estatisticamente significativo.
+        A Estatística T traduz o gráfico acima em números: ela mede se o retorno excedente gerado foi forte o suficiente para romper a barreira do ruído e ser considerado estatisticamente significativo na janela de tempo escolhida.
         """)
         
         if volatilidade_mensal > 0:
