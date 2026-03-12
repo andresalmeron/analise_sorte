@@ -25,23 +25,19 @@ def ler_arquivo(arquivo):
         raise ValueError("O arquivo não possui duas colunas separadas para Data e Cota.")
     return df
 
-def limpar_numero_inteligente(val):
-    """Identifica se o separador de milhar é ponto ou vírgula dinamicamente."""
+def limpar_numero_base_100(val):
+    """Limpa o número e já prepara para o ajuste de base."""
     if pd.isna(val): return np.nan
     if isinstance(val, (int, float)): return float(val)
     val = str(val).strip()
     
-    has_comma = ',' in val
-    has_dot = '.' in val
-    
-    if has_comma and has_dot:
-        # O que aparecer por último é o separador decimal real
+    # Tratamento de pontuação
+    if ',' in val and '.' in val:
         if val.rfind(',') > val.rfind('.'):
-            val = val.replace('.', '').replace(',', '.') # Padrão BR
+            val = val.replace('.', '').replace(',', '.')
         else:
-            val = val.replace(',', '') # Padrão US
-    elif has_comma:
-        # Só tem vírgula, geralmente é o decimal no padrão BR
+            val = val.replace(',', '')
+    elif ',' in val:
         val = val.replace(',', '.')
         
     try:
@@ -50,18 +46,23 @@ def limpar_numero_inteligente(val):
         return np.nan
 
 def processar_dados(df):
-    """Limpa a base e prepara a série temporal."""
+    """Limpa a base, divide por 100 e calcula a série temporal corretamente."""
     df = df.iloc[:, :2].copy()
     df.columns = ['Data', 'Cota']
     
     df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
     df = df.dropna(subset=['Data']) 
     
-    df['Cota'] = df['Cota'].apply(limpar_numero_inteligente)
+    # Aplica a limpeza do valor bruto
+    df['Cota'] = df['Cota'].apply(limpar_numero_base_100)
     df = df.dropna(subset=['Cota'])
     
+    # ORDENAÇÃO E APLICAÇÃO DA BASE 100 (=B2/100) COMO SOLICITADO
     df = df.sort_values('Data').reset_index(drop=True)
-    df['Retorno'] = df['Cota'].pct_change()
+    df['Cota_Base100'] = df['Cota'] / 100.0
+    
+    # Cálculo do Retorno sobre a base ajustada
+    df['Retorno'] = df['Cota_Base100'].pct_change()
     
     df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
     
@@ -69,6 +70,14 @@ def processar_dados(df):
         raise ValueError("Não sobrou nenhum dado válido após a limpeza.")
         
     return df
+
+def formatar_percentual_br(valor):
+    """Converte decimal para formato percentual brasileiro (ex: 15,30%)."""
+    return f"{valor * 100:.2f}%".replace('.', ',')
+
+def formatar_decimal_br(valor):
+    """Converte float para formato decimal brasileiro."""
+    return f"{valor:.2f}".replace('.', ',')
 
 st.title("Sorte ou Habilidade? O Teste da Aleatoriedade")
 st.markdown("""
@@ -81,12 +90,6 @@ if arquivo_upload is not None:
     try:
         df_raw = ler_arquivo(arquivo_upload)
         df = processar_dados(df_raw)
-        
-        # Alerta de Sanidade dos Dados
-        retorno_max = df['Retorno'].max()
-        retorno_min = df['Retorno'].min()
-        if retorno_max > 1.0 or retorno_min < -0.8:
-            st.warning(f"⚠️ **Alerta de Dados Extremos:** Detectamos oscilações atípicas em meses específicos (Máxima mensal: {retorno_max:.0%}, Mínima: {retorno_min:.0%}). Se a plataforma extraiu a 'Cota Física' em vez da 'Cota Ajustada', ou se houveram falhas de digitação na origem, o resultado do estudo será distorcido.")
 
         n_meses = len(df)
         anos = n_meses / 12
@@ -98,10 +101,10 @@ if arquivo_upload is not None:
         
         st.subheader("1. Resumo da Amostra")
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Período Analisado", f"{anos:.1f} anos")
+        col1.metric("Período Analisado", f"{formatar_decimal_br(anos)} anos")
         col2.metric("Meses (N)", f"{n_meses}")
-        col3.metric("Retorno Médio (a.a.)", f"{retorno_anualizado:.2%}")
-        col4.metric("Volatilidade (a.a.)", f"{volatilidade_anualizada:.2%}")
+        col3.metric("Retorno Médio (a.a.)", formatar_percentual_br(retorno_anualizado))
+        col4.metric("Volatilidade (a.a.)", formatar_percentual_br(volatilidade_anualizada))
         
         st.divider()
 
@@ -137,7 +140,7 @@ if arquivo_upload is not None:
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             
-            # Formata eixo Y para números normais ao invés de notação científica
+            # Formatação ajustada do eixo Y para prevenir notação científica
             ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
             
         st.pyplot(fig)
@@ -156,7 +159,6 @@ if arquivo_upload is not None:
         A Estatística T traduz o gráfico acima em números: ela mede se o retorno excedente gerado foi forte o suficiente para romper a barreira do ruído e ser considerado estatisticamente significativo.
         """)
         
-        # Adicionado tratamento para evitar divisão por zero se a volatilidade for zero (improvável, mas seguro)
         if volatilidade_mensal > 0:
             t_stat = retorno_medio_mensal / (volatilidade_mensal / np.sqrt(n_meses))
             anos_necessarios = ((2.0 * volatilidade_mensal) / retorno_medio_mensal)**2 / 12 if retorno_medio_mensal > 0 else float('inf')
@@ -166,7 +168,7 @@ if arquivo_upload is not None:
             
         c1, c2 = st.columns(2)
         with c1:
-            st.metric("T-Stat (Ouro > 2.0)", f"{t_stat:.2f}")
+            st.metric("T-Stat (Ouro > 2,0)", formatar_decimal_br(t_stat))
             if t_stat >= 2.0:
                 st.success("Resultado Estatisticamente Significativo. Há indícios matemáticos de skill.")
             else:
@@ -174,7 +176,7 @@ if arquivo_upload is not None:
                 
         with c2:
             if retorno_medio_mensal > 0:
-                st.metric("Anos exigidos para provar habilidade (T=2.0)", f"{anos_necessarios:.1f} anos")
+                st.metric("Anos exigidos para provar habilidade (T=2,0)", f"{formatar_decimal_br(anos_necessarios)} anos")
                 st.info("O modelo assume Alfa zero. Quanto maior a volatilidade, maior o tempo exigido para descartar a sorte.")
         
     except Exception as e:
