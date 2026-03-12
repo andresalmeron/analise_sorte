@@ -9,7 +9,6 @@ import re
 st.set_page_config(page_title="Sorte ou Habilidade?", layout="wide")
 
 def ler_arquivo(arquivo):
-    """Lê o arquivo de forma bruta."""
     if arquivo.name.endswith('.csv'):
         try:
             df = pd.read_csv(arquivo, sep=',', encoding='utf-8')
@@ -23,17 +22,14 @@ def ler_arquivo(arquivo):
         df = pd.read_excel(arquivo)
         
     if df.shape[1] < 2:
-        raise ValueError("O arquivo não possui duas colunas úteis (Data e Cota).")
+        raise ValueError("O arquivo não possui duas colunas úteis (Data e Cota/Preço).")
     return df
 
-def limpar_numero_trator(val):
-    """Ignora o Excel e arranca os números na força bruta com Regex."""
+def limpar_numero(val):
     if pd.isna(val): return np.nan
     if isinstance(val, (int, float)): return float(val)
-    
     val_str = str(val).strip()
     val_limpo = re.sub(r'[^\d.,-]', '', val_str)
-    
     if val_limpo == '': return np.nan
     
     if ',' in val_limpo and '.' in val_limpo:
@@ -60,43 +56,31 @@ st.markdown("""
 Esta ferramenta aplica testes estatísticos rigorosos para responder a uma pergunta fundamental na alocação de capital: **O retorno histórico de um fundo é fruto da genialidade do gestor ou apenas um passeio aleatório guiado pelo ruído do mercado?**
 """)
 
-arquivo_upload = st.file_uploader("Faça o upload da planilha (Excel ou CSV da extração)", type=['csv', 'xlsx'])
+arquivo_upload = st.file_uploader("Faça o upload da planilha (Excel ou CSV da extração com os PREÇOS)", type=['csv', 'xlsx'])
 
 if arquivo_upload is not None:
-    # 1. Leitura Bruta
     df_raw = ler_arquivo(arquivo_upload)
 
     with st.expander("🛠️ Modo Depuração (Leitura Bruta)"):
         st.dataframe(df_raw.head())
 
     try:
-        # =================================================================
-        # A BALA DE PRATA: Mata as colunas fantasmas "Unnamed" geradas 
-        # pelas exportações antes de selecionar a Data e a Cota.
-        # =================================================================
         df = df_raw.loc[:, ~df_raw.columns.str.contains('^Unnamed')].copy()
-        
-        # Agora sim podemos pegar as duas primeiras colunas com segurança
         df = df.iloc[:, :2]
         df.columns = ['Data', 'Cota']
         
         df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
-        df['Cota'] = df['Cota'].apply(limpar_numero_trator)
+        df['Cota'] = df['Cota'].apply(limpar_numero)
         
         df = df.dropna(subset=['Data', 'Cota'])
         
-        if len(df) == 0:
-            st.error("Erro após limpeza: Não sobraram dados. Verifique a planilha.")
-            st.stop()
-            
-        # Cálculo Seguro em Base 100
+        # Como a base é de preços, o pct_change calcula o retorno mês a mês.
+        # A primeira data observada se torna o "Mês 0" referencial para o investimento.
         df = df.sort_values('Data').reset_index(drop=True)
-        df['Cota_Base100'] = df['Cota'] / 100.0
-        df['Retorno'] = df['Cota_Base100'].pct_change()
+        df['Retorno'] = df['Cota'].pct_change()
         
         df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
         
-        # Estatísticas
         n_meses = len(df)
         anos = n_meses / 12
         retorno_medio_mensal = df['Retorno'].mean()
@@ -127,6 +111,7 @@ if arquivo_upload is not None:
             simulacoes_retornos = retornos_historicos[indices_aleatorios]
             
             caminhos_acumulados = np.cumprod(simulacoes_retornos + 1, axis=0)
+            # Insere o Fator 1.0 como a âncora inicial (Mês 0) para todas as simulações
             caminhos_acumulados = np.vstack([np.ones(num_simulacoes), caminhos_acumulados]) 
             
             trajetoria_real = np.cumprod(retornos_historicos + 1)
@@ -137,6 +122,16 @@ if arquivo_upload is not None:
             
             ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
             ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
+            
+            # ==========================================================
+            # CORTE DE ESCALA (Guilhotina Estatística)
+            # Corta o gráfico no P99 para focar no centro da distribuição
+            # ==========================================================
+            teto_simulado = np.percentile(caminhos_acumulados[-1, :], 99)
+            teto_real = np.max(trajetoria_real)
+            limite_superior = max(teto_simulado, teto_real) * 1.10 # Adiciona 10% de margem no topo
+            
+            ax.set_ylim(bottom=0, top=limite_superior)
             
             ax.set_title(f'Trajetória Real vs. {num_simulacoes} Caminhos Aleatórios', fontsize=14)
             ax.set_ylabel('Fator de Crescimento do Capital')
