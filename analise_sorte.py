@@ -11,9 +11,7 @@ st.set_page_config(page_title="Sorte ou Habilidade? (Qualificado)", layout="wide
 @st.cache_data(ttl=86400) # Mantém a base em cache por 24 horas para evitar lentidão
 def carregar_benchmark_default():
     """Baixa a base do IBRX 100 (XLSX) diretamente do repositório no GitHub."""
-    # O link 'raw' aponta diretamente para o binário do arquivo Excel
     url_ibrx = "https://raw.githubusercontent.com/andresalmeron/analise_sorte/QUALIFICADO/preco%20-%20ibrx.xlsx"
-    # O engine 'openpyxl' é necessário para ler arquivos .xlsx
     return pd.read_excel(url_ibrx, engine='openpyxl')
 
 def ler_arquivo(arquivo, sep_default=';'):
@@ -104,8 +102,14 @@ if arquivo_upload is not None:
     df_completo = pd.merge(df_fundo[['Data', 'Retorno_Fundo']], df_bench[['Data', 'Retorno_Bench']], on='Data', how='inner')
     df_completo = df_completo.replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop=True)
     
+    # --- NOVO: Trava de Integridade Histórica (A partir de 01/05/2000) ---
+    data_corte = pd.to_datetime('2000-05-01')
+    if df_completo['Data'].min() < data_corte:
+        st.warning("⚠️ **Aviso de Integridade Metodológica:** O índice IBRX 100 passou a possuir uma carteira funcional com precificação real apenas a partir de **01/05/2000**. Como os dados anteriores a essa data incluíam ativos simulados com precificação incerta, qualquer período pré-maio/2000 foi removido da análise para garantir o rigor institucional do modelo.")
+        df_completo = df_completo[df_completo['Data'] >= data_corte].reset_index(drop=True)
+    
     if len(df_completo) < 3:
-        st.error("⚠️ Não há dados sobrepostos suficientes entre o Fundo e o Benchmark para rodar a regressão.")
+        st.error("⚠️ Não há dados sobrepostos suficientes (a partir de Mai/2000) entre o Fundo e o Benchmark para rodar a regressão.")
         st.stop()
         
     df_completo['MesAno_Str'] = df_completo['Data'].dt.strftime('%m/%Y')
@@ -168,7 +172,6 @@ if arquivo_upload is not None:
     ret_fundo = df['Retorno_Fundo'].values
     ret_bench = df['Retorno_Bench'].values
     
-    # Extração empírica dos fatores da amostra
     beta, alpha = np.polyfit(ret_bench, ret_fundo, 1)
     residuos = ret_fundo - (alpha + beta * ret_bench)
     
@@ -224,45 +227,17 @@ if arquivo_upload is not None:
         # 3. Mediana (P50)
         trajetoria_mediana = np.median(caminhos_acumulados, axis=1)
         
-        # Trajetória real (Histórico do gestor)
         trajetoria_real = np.cumprod(ret_fundo + 1)
         trajetoria_real = np.insert(trajetoria_real, 0, 1.0)
         
         fig, ax = plt.subplots(figsize=(12, 6))
         eixo_x = np.arange(n_meses + 1)
         
-        # Plotando alguns universos paralelos leves ao fundo (opcional, para dar textura)
+        # Plotando alguns universos paralelos leves ao fundo
         ax.plot(eixo_x, caminhos_acumulados[:, :300], color='lightgray', alpha=0.1)
         
         # Plot do Túnel Sombreado
         ax.fill_between(eixo_x, percentil_5, percentil_95, color='#BDC3C7', alpha=0.4, label='Túnel de Probabilidade (90% dos Cenários)')
         
         # Linhas Centrais e Realidade
-        ax.plot(eixo_x, trajetoria_media_aparada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Aparada (95% Central)')
-        ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana Simulação (P50)')
-        ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real (Gestor)')
-        
-        # Ajuste de Eixos
-        teto_simulado = np.max(percentil_95)
-        teto_real = np.max(trajetoria_real)
-        limite_superior = max(teto_simulado, teto_real) * 1.10 
-        
-        ax.set_ylim(bottom=0, top=limite_superior)
-        ax.set_title(f'Trajetória Real vs. {num_simulacoes} Universos (Beta Sistêmico + Resíduo)', fontsize=14)
-        ax.set_ylabel('Fator de Crescimento do Capital')
-        ax.set_xlabel('Meses Alocados')
-        ax.grid(axis='y', linestyle='--', alpha=0.5)
-        ax.legend(loc='upper left')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(x).replace(',', '.')))
-        
-    st.pyplot(fig)
-    plt.close(fig)
-    
-    st.markdown("""
-    **A Leitura do Modelo:**
-    * **O Túnel de Probabilidade (Área Cinza):** Compreende 90% dos universos possíveis. Se o gestor operasse como um mero "robô de mercado" ancorado no seu Beta histórico, a imensa maioria dos seus resultados cairia dentro dessa faixa.
-    * **Média Aparada & Mediana:** Mostram o centro de gravidade da simulação, excluindo eventos de cauda (os extremos de sorte ou azar absoluto). 
-    * **Avaliação de Habilidade:** Se a linha azul espessa (**Trajetória Real**) consegue escapar do Túnel de Probabilidade para cima ou sustenta-se de forma inquestionável acima das linhas centrais (verde e vermelha), o modelo nos diz que há evidências matemáticas robustas de **Alfa (Habilidade Real)**, que não podem ser explicadas pela flutuação do mercado livre de eficiência.
-    """)
+        ax.plot(eixo_x, trajetoria_media_aparada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Aparada (
