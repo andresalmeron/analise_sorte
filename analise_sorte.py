@@ -2,14 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import stats
 
 # Configuração da página
 st.set_page_config(page_title="Sorte ou Habilidade?", layout="wide")
 
 def processar_dados(df):
     """Limpa e formata o dataframe de cotas para retornos mensais."""
-    # Renomear colunas para padrão
+    # Renomear colunas para padrão assumindo que a 1ª é Data e a 2ª é Cota
     df.columns = ['Data', 'Cota']
     
     # Converter para datetime
@@ -65,50 +64,21 @@ if arquivo_upload is not None:
         col4.metric("Volatilidade (a.a.)", f"{volatilidade_anualizada:.2%}")
         
         st.divider()
-        
-        # -------------------------------------------------------------------
-        # SEÇÃO 1: A Régua da Dúvida (T-Stat)
-        # -------------------------------------------------------------------
-        st.subheader("2. A Régua da Dúvida: Estatística T")
-        st.markdown("""
-        Na ciência de dados financeiros, assumimos que **o Alfa é zero até que se prove o contrário**. A volatilidade atua como um "ruído" que esconde a verdade. A Estatística T mede se o retorno gerado foi forte o suficiente para romper a barreira do ruído e ser considerado estatisticamente significativo (habilidade real).
-        """)
-        
-        # Cálculo do T-Stat considerando H0: Retorno Médio = 0
-        t_stat = retorno_medio_mensal / (volatilidade_mensal / np.sqrt(n_meses))
-        
-        # Cálculo de quantos anos seriam necessários para t = 2.0 (95% de confiança)
-        anos_necessarios = ((2.0 * volatilidade_mensal) / retorno_medio_mensal)**2 / 12 if retorno_medio_mensal > 0 else float('inf')
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("T-Stat (Ouro > 2.0)", f"{t_stat:.2f}")
-            if t_stat >= 2.0:
-                st.success("Resultado Estatisticamente Significativo. Há evidências de que não foi apenas sorte.")
-            else:
-                st.warning("Resultado NÃO Significativo. O retorno não superou o ruído da amostra.")
-                
-        with c2:
-            if retorno_medio_mensal > 0:
-                st.metric("Anos de histórico necessários para provar habilidade (T=2.0)", f"{anos_necessarios:.1f} anos")
-                st.info("Observe como a volatilidade exige décadas de dados para confirmar consistência real.")
-        
-        st.divider()
 
         # -------------------------------------------------------------------
         # SEÇÃO 2: O Multiverso do Azar (Monte Carlo)
         # -------------------------------------------------------------------
-        st.subheader("3. O Multiverso do Azar: Simulação de Monte Carlo")
+        st.subheader("2. O Multiverso do Azar: Simulação de Monte Carlo")
         st.markdown("""
         Se o mercado é um passeio aleatório, o que acontece se pegarmos todos os retornos mensais deste fundo e **sortearmos a ordem deles 10.000 vezes**? 
         
-        Se a linha azul (o histórico real do fundo) terminar no meio da nuvem cinza (os caminhos aleatórios), significa que **milhares de macacos jogando dados chegariam ao mesmo resultado**. A consistência da trajetória, neste caso, é uma ilusão.
+        Se a linha azul (o histórico real do fundo) terminar no meio da nuvem cinza (os caminhos aleatórios), significa que **milhares de investidores jogando dados chegariam ao mesmo resultado**. A consistência da trajetória, neste caso, é uma ilusão.
         """)
         
         num_simulacoes = 10000
         retornos_historicos = df['Retorno'].values
         
-        # Progresso visual para o usuário
+        # O processamento matemático fica dentro do spinner
         with st.spinner('Gerando 10.000 universos paralelos (Bootstrapping)...'):
             # Gera matriz de índices aleatórios com reposição
             indices_aleatorios = np.random.randint(0, n_meses, size=(n_meses, num_simulacoes))
@@ -125,36 +95,66 @@ if arquivo_upload is not None:
             # Trajetória real para comparação
             trajetoria_real = np.cumprod(retornos_historicos + 1)
             
-            # Plotagem
+            # Criação da figura
             fig, ax = plt.subplots(figsize=(12, 6))
             
-            # Plota uma amostra dos caminhos (ex: 500) para não travar o navegador, mas mantém a escala estatística
-            ax.plot(caminhos_acumulados[:, :500], color='lightgray', alpha=0.1)
+            # Plota uma amostra dos caminhos (ex: 500) para manter o navegador fluido
+            ax.plot(caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
             
             # Plota a linha real
             ax.plot(trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
             
             # Formatação do gráfico
-            ax.set_title(f'Trajetória Real vs. 10.000 Caminhos Aleatórios ({n_meses} meses)', fontsize=14)
-            ax.set_ylabel('Crescimento do Capital (Fator Acumulado)')
+            ax.set_title(f'Trajetória Real vs. Caminhos Aleatórios ({n_meses} meses)', fontsize=14)
+            ax.set_ylabel('Fator de Crescimento do Capital')
             ax.set_xlabel('Meses')
             ax.grid(axis='y', linestyle='--', alpha=0.7)
             ax.legend()
             
-            # Remove bordas superiores e direitas para design mais limpo
+            # Design mais limpo
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             
-            st.pyplot(fig)
+        # A renderização do gráfico fica FORA do spinner para garantir que não desapareça
+        st.pyplot(fig)
+        
+        # Conclusão pedagógica
+        st.markdown("""
+        **Como interpretar a imagem:**
+        * A mancha cinza representa o **domínio da sorte**. Todos esses caminhos contêm exatamente as mesmas taxas de retorno que o fundo teve, apenas em ordens diferentes.
+        * Se a linha azul não foge expressivamente da nuvem cinza, o resultado prático se deve fundamentalmente à exposição sistemática aos fatores de risco, e não à habilidade do gestor de "bater o mercado".
+        """)
             
-            # Conclusão pedagógica
-            st.markdown("""
-            **Como interpretar a imagem:**
-            * A mancha cinza representa o **domínio da sorte**. Todos esses caminhos contêm exatamente as mesmas taxas de retorno que o fundo teve, apenas em ordens diferentes.
-            * Se a linha azul espessa não foge do padrão geral da mancha, evidencia-se que a alocação de risco sistemático (os fatores de mercado) ditou o resultado, e não o momento exato de entrada e saída do gestor.
-            """)
-            
+        st.divider()
+
+        # -------------------------------------------------------------------
+        # SEÇÃO 3: A Régua da Dúvida (T-Stat)
+        # -------------------------------------------------------------------
+        st.subheader("3. A Régua da Dúvida: Estatística T")
+        st.markdown("""
+        Na análise quantitativa, assume-se que **o Alfa é zero até que se prove o contrário**. A Estatística T traduz o gráfico acima em números: ela mede se o retorno gerado foi forte o suficiente para romper a barreira do ruído de mercado e ser considerado estatisticamente significativo.
+        """)
+        
+        # Cálculo do T-Stat considerando H0: Retorno Médio = 0
+        t_stat = retorno_medio_mensal / (volatilidade_mensal / np.sqrt(n_meses))
+        
+        # Cálculo de quantos anos seriam necessários para t = 2.0 (95% de confiança)
+        anos_necessarios = ((2.0 * volatilidade_mensal) / retorno_medio_mensal)**2 / 12 if retorno_medio_mensal > 0 else float('inf')
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("T-Stat (Ouro > 2.0)", f"{t_stat:.2f}")
+            if t_stat >= 2.0:
+                st.success("Resultado Estatisticamente Significativo. Há fortes indícios matemáticos contra o acaso puro.")
+            else:
+                st.warning("Resultado NÃO Significativo. O retorno médio não superou o ruído da amostra.")
+                
+        with c2:
+            if retorno_medio_mensal > 0:
+                st.metric("Anos de histórico exigidos para provar habilidade (T=2.0)", f"{anos_necessarios:.1f} anos")
+                st.info("Isto mostra o tempo irrealista que a volatilidade exige para confirmar consistência.")
+        
     except Exception as e:
-        st.error(f"Erro ao processar o arquivo. Certifique-se de que é a extração correta. Detalhe do erro: {e}")
+        st.error(f"Erro ao processar o arquivo. Detalhe técnico: {e}")
 else:
-    st.info("Aguardando o upload do arquivo base para iniciar a demonstração.")
+    st.info("Aguardando o upload da base de dados (planilha) para iniciar a demonstração.")
