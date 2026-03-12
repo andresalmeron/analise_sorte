@@ -8,12 +8,11 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Sorte ou Habilidade?", layout="wide")
 
 def ler_arquivo(arquivo):
-    """Função robusta para ler CSVs/Excel e contornar os cabeçalhos do Comdinheiro."""
+    """Lê o arquivo de forma robusta, lidando com os cabeçalhos das plataformas."""
     if arquivo.name.endswith('.csv'):
         try:
-            # Tenta primeiro o padrão vírgula
             df = pd.read_csv(arquivo, sep=',', encoding='utf-8')
-            if df.shape[1] < 2: # Se leu como 1 coluna só, tenta ponto-e-vírgula
+            if df.shape[1] < 2: 
                 arquivo.seek(0)
                 df = pd.read_csv(arquivo, sep=';', encoding='latin-1')
         except Exception:
@@ -26,46 +25,54 @@ def ler_arquivo(arquivo):
         raise ValueError("O arquivo não possui duas colunas separadas para Data e Cota.")
     return df
 
+def limpar_numero_inteligente(val):
+    """Identifica se o separador de milhar é ponto ou vírgula dinamicamente."""
+    if pd.isna(val): return np.nan
+    if isinstance(val, (int, float)): return float(val)
+    val = str(val).strip()
+    
+    has_comma = ',' in val
+    has_dot = '.' in val
+    
+    if has_comma and has_dot:
+        # O que aparecer por último é o separador decimal real
+        if val.rfind(',') > val.rfind('.'):
+            val = val.replace('.', '').replace(',', '.') # Padrão BR
+        else:
+            val = val.replace(',', '') # Padrão US
+    elif has_comma:
+        # Só tem vírgula, geralmente é o decimal no padrão BR
+        val = val.replace(',', '.')
+        
+    try:
+        return float(val)
+    except:
+        return np.nan
+
 def processar_dados(df):
-    """Limpa a base isolando o ruído das extrações."""
+    """Limpa a base e prepara a série temporal."""
     df = df.iloc[:, :2].copy()
     df.columns = ['Data', 'Cota']
     
-    # Ao forçar a conversão de Data, cabeçalhos sujos e rodapés viram 'NaT' (Not a Time)
     df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
     df = df.dropna(subset=['Data']) 
     
-    # Conversão inteligente de valores financeiros
-    def limpar_numero(val):
-        if pd.isna(val): return np.nan
-        if isinstance(val, (int, float)): return float(val)
-        val = str(val).strip()
-        # Apenas remove os pontos se o valor usar vírgula como decimal (Padrão BR)
-        if ',' in val:
-            val = val.replace('.', '').replace(',', '.')
-        try:
-            return float(val)
-        except:
-            return np.nan
-            
-    df['Cota'] = df['Cota'].apply(limpar_numero)
+    df['Cota'] = df['Cota'].apply(limpar_numero_inteligente)
     df = df.dropna(subset=['Cota'])
     
-    # Ordenação cronológica rigorosa
     df = df.sort_values('Data').reset_index(drop=True)
     df['Retorno'] = df['Cota'].pct_change()
     
-    # Remove a primeira linha vazia e quaisquer anomalias matemáticas
     df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
     
     if len(df) == 0:
-        raise ValueError("Não sobrou nenhum dado válido após a limpeza. Verifique o arquivo.")
+        raise ValueError("Não sobrou nenhum dado válido após a limpeza.")
         
     return df
 
 st.title("Sorte ou Habilidade? O Teste da Aleatoriedade")
 st.markdown("""
-Esta ferramenta aplica testes estatísticos rigorosos para responder a uma pergunta fundamental na alocação de capital: **O retorno histórico de um fundo é fruto da genialidade do gestor ou apenas um passeio aleatório (Random Walk) guiado pelo ruído do mercado?**
+Esta ferramenta aplica testes estatísticos rigorosos para responder a uma pergunta fundamental na alocação de capital: **O retorno histórico de um fundo é fruto da genialidade do gestor ou apenas um passeio aleatório guiado pelo ruído do mercado?**
 """)
 
 arquivo_upload = st.file_uploader("Faça o upload da planilha (Excel ou CSV da extração)", type=['csv', 'xlsx'])
@@ -75,6 +82,12 @@ if arquivo_upload is not None:
         df_raw = ler_arquivo(arquivo_upload)
         df = processar_dados(df_raw)
         
+        # Alerta de Sanidade dos Dados
+        retorno_max = df['Retorno'].max()
+        retorno_min = df['Retorno'].min()
+        if retorno_max > 1.0 or retorno_min < -0.8:
+            st.warning(f"⚠️ **Alerta de Dados Extremos:** Detectamos oscilações atípicas em meses específicos (Máxima mensal: {retorno_max:.0%}, Mínima: {retorno_min:.0%}). Se a plataforma extraiu a 'Cota Física' em vez da 'Cota Ajustada', ou se houveram falhas de digitação na origem, o resultado do estudo será distorcido.")
+
         n_meses = len(df)
         anos = n_meses / 12
         retorno_medio_mensal = df['Retorno'].mean()
@@ -104,7 +117,6 @@ if arquivo_upload is not None:
             indices_aleatorios = np.random.randint(0, n_meses, size=(n_meses, num_simulacoes))
             simulacoes_retornos = retornos_historicos[indices_aleatorios]
             
-            # Cálculo com base 1.0 (Ponto Zero)
             caminhos_acumulados = np.cumprod(simulacoes_retornos + 1, axis=0)
             caminhos_acumulados = np.vstack([np.ones(num_simulacoes), caminhos_acumulados]) 
             
@@ -125,37 +137,45 @@ if arquivo_upload is not None:
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             
+            # Formata eixo Y para números normais ao invés de notação científica
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
+            
         st.pyplot(fig)
         plt.close(fig) 
         
         st.markdown("""
         **Como interpretar a imagem:**
-        * A mancha cinza representa o **domínio da sorte**. Todos esses caminhos contêm exatamente as mesmas taxas de retorno que o fundo teve, apenas embaralhadas.
-        * Se a linha azul não foge expressivamente da nuvem cinza, o resultado prático se deve fundamentalmente à exposição sistemática aos fatores de risco.
+        * A mancha cinza representa o **domínio da sorte**. Todos esses caminhos contêm exatamente as mesmas taxas de retorno mensais que o fundo teve, apenas embaralhadas.
+        * Se a linha azul não foge expressivamente da nuvem cinza (para cima), o resultado prático se deve fundamentalmente à exposição sistemática ao prêmio de risco ao longo do tempo.
         """)
             
         st.divider()
 
         st.subheader("3. A Régua da Dúvida: Estatística T")
         st.markdown("""
-        A Estatística T traduz o gráfico acima em números: ela mede se o retorno gerado foi forte o suficiente para romper a barreira do ruído e ser considerado estatisticamente significativo.
+        A Estatística T traduz o gráfico acima em números: ela mede se o retorno excedente gerado foi forte o suficiente para romper a barreira do ruído e ser considerado estatisticamente significativo.
         """)
         
-        t_stat = retorno_medio_mensal / (volatilidade_mensal / np.sqrt(n_meses))
-        anos_necessarios = ((2.0 * volatilidade_mensal) / retorno_medio_mensal)**2 / 12 if retorno_medio_mensal > 0 else float('inf')
-        
+        # Adicionado tratamento para evitar divisão por zero se a volatilidade for zero (improvável, mas seguro)
+        if volatilidade_mensal > 0:
+            t_stat = retorno_medio_mensal / (volatilidade_mensal / np.sqrt(n_meses))
+            anos_necessarios = ((2.0 * volatilidade_mensal) / retorno_medio_mensal)**2 / 12 if retorno_medio_mensal > 0 else float('inf')
+        else:
+            t_stat = 0
+            anos_necessarios = float('inf')
+            
         c1, c2 = st.columns(2)
         with c1:
             st.metric("T-Stat (Ouro > 2.0)", f"{t_stat:.2f}")
             if t_stat >= 2.0:
-                st.success("Resultado Estatisticamente Significativo. Há fortes indícios contra o acaso puro.")
+                st.success("Resultado Estatisticamente Significativo. Há indícios matemáticos de skill.")
             else:
-                st.warning("Resultado NÃO Significativo. O retorno médio não superou o ruído da amostra.")
+                st.warning("Resultado NÃO Significativo. O retorno médio não rompeu o ruído de mercado.")
                 
         with c2:
             if retorno_medio_mensal > 0:
                 st.metric("Anos exigidos para provar habilidade (T=2.0)", f"{anos_necessarios:.1f} anos")
-                st.info("O modelo assume que o Alfa é zero. A volatilidade exige tempo para confirmar consistência.")
+                st.info("O modelo assume Alfa zero. Quanto maior a volatilidade, maior o tempo exigido para descartar a sorte.")
         
     except Exception as e:
         st.error(f"Erro ao processar o arquivo. Detalhe técnico: {e}")
