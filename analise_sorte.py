@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg') # ESTA É A MÁGICA QUE IMPEDE O GRÁFICO DE SUMIR
 import matplotlib.pyplot as plt
 
 # Configuração da página
@@ -8,18 +10,20 @@ st.set_page_config(page_title="Sorte ou Habilidade?", layout="wide")
 
 def processar_dados(df):
     """Limpa e formata o dataframe de cotas para retornos mensais."""
-    # Renomear colunas para padrão assumindo que a 1ª é Data e a 2ª é Cota
+    # Pegar apenas as duas primeiras colunas (Data e Cota)
+    df = df.iloc[:, :2]
     df.columns = ['Data', 'Cota']
     
     # Converter para datetime
-    df['Data'] = pd.to_datetime(df['Data'])
+    df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+    df = df.dropna(subset=['Data'])
     
     # Garantir ordem cronológica (do mais antigo para o mais novo)
     df = df.sort_values('Data').reset_index(drop=True)
     
-    # Converter cota para float (removendo possíveis strings ou vírgulas se houver)
+    # Converter cota para float (lidando com padrão brasileiro)
     if df['Cota'].dtype == object:
-        df['Cota'] = df['Cota'].astype(str).str.replace(',', '.').astype(float)
+        df['Cota'] = df['Cota'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).astype(float)
         
     # Calcular o retorno percentual mensal
     df['Retorno'] = df['Cota'].pct_change()
@@ -39,9 +43,9 @@ arquivo_upload = st.file_uploader("Faça o upload da planilha de cotas (CSV ou E
 
 if arquivo_upload is not None:
     try:
-        # Tenta ler como CSV primeiro, se falhar, tenta Excel
+        # Leitura robusta para arquivos Comdinheiro/Economatica
         if arquivo_upload.name.endswith('.csv'):
-            df_raw = pd.read_csv(arquivo_upload)
+            df_raw = pd.read_csv(arquivo_upload, sep=None, engine='python')
         else:
             df_raw = pd.read_excel(arquivo_upload)
             
@@ -78,51 +82,47 @@ if arquivo_upload is not None:
         num_simulacoes = 10000
         retornos_historicos = df['Retorno'].values
         
-        # O processamento matemático fica dentro do spinner
         with st.spinner('Gerando 10.000 universos paralelos (Bootstrapping)...'):
-            # Gera matriz de índices aleatórios com reposição
+            # Embaralha os retornos criando N cenários
             indices_aleatorios = np.random.randint(0, n_meses, size=(n_meses, num_simulacoes))
-            
-            # Mapeia os índices para os retornos reais
             simulacoes_retornos = retornos_historicos[indices_aleatorios]
             
-            # Adiciona 1 para calcular retorno acumulado
-            simulacoes_retornos_mais_um = simulacoes_retornos + 1
+            # Calcula o retorno acumulado (com base 1.0 no mês 0)
+            caminhos_acumulados = np.cumprod(simulacoes_retornos + 1, axis=0)
+            caminhos_acumulados = np.vstack([np.ones(num_simulacoes), caminhos_acumulados]) # Adiciona origem comum
             
-            # Calcula o retorno acumulado de cada caminho
-            caminhos_acumulados = np.cumprod(simulacoes_retornos_mais_um, axis=0)
-            
-            # Trajetória real para comparação
+            # Trajetória real (com base 1.0 no mês 0)
             trajetoria_real = np.cumprod(retornos_historicos + 1)
+            trajetoria_real = np.insert(trajetoria_real, 0, 1.0)
             
-            # Criação da figura
+            # Criação da figura com o backend fixado
             fig, ax = plt.subplots(figsize=(12, 6))
             
-            # Plota uma amostra dos caminhos (ex: 500) para manter o navegador fluido
-            ax.plot(caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
+            eixo_x = np.arange(n_meses + 1)
             
-            # Plota a linha real
-            ax.plot(trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
+            # Plota uma amostra (ex: 500) para manter o gráfico legível e rápido
+            ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
             
-            # Formatação do gráfico
-            ax.set_title(f'Trajetória Real vs. Caminhos Aleatórios ({n_meses} meses)', fontsize=14)
+            # Plota a linha real por cima de tudo
+            ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
+            
+            # Formatação visual
+            ax.set_title(f'Trajetória Real vs. {num_simulacoes} Caminhos Aleatórios', fontsize=14)
             ax.set_ylabel('Fator de Crescimento do Capital')
-            ax.set_xlabel('Meses')
-            ax.grid(axis='y', linestyle='--', alpha=0.7)
+            ax.set_xlabel('Meses Alocados')
+            ax.grid(axis='y', linestyle='--', alpha=0.5)
             ax.legend()
-            
-            # Design mais limpo
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             
-        # A renderização do gráfico fica FORA do spinner para garantir que não desapareça
+        # Renderização explicitamente fora do spinner
         st.pyplot(fig)
+        plt.close(fig) # Limpa a memória
         
-        # Conclusão pedagógica
         st.markdown("""
         **Como interpretar a imagem:**
-        * A mancha cinza representa o **domínio da sorte**. Todos esses caminhos contêm exatamente as mesmas taxas de retorno que o fundo teve, apenas em ordens diferentes.
-        * Se a linha azul não foge expressivamente da nuvem cinza, o resultado prático se deve fundamentalmente à exposição sistemática aos fatores de risco, e não à habilidade do gestor de "bater o mercado".
+        * A mancha cinza representa o **domínio da sorte**. Todos esses caminhos contêm exatamente as mesmas taxas de retorno que o fundo teve, apenas embaralhadas.
+        * Se a linha azul não foge expressivamente da nuvem cinza, o resultado prático se deve fundamentalmente à exposição aos fatores de risco durante o período, e não à habilidade do gestor em fazer *market timing*.
         """)
             
         st.divider()
@@ -132,13 +132,10 @@ if arquivo_upload is not None:
         # -------------------------------------------------------------------
         st.subheader("3. A Régua da Dúvida: Estatística T")
         st.markdown("""
-        Na análise quantitativa, assume-se que **o Alfa é zero até que se prove o contrário**. A Estatística T traduz o gráfico acima em números: ela mede se o retorno gerado foi forte o suficiente para romper a barreira do ruído de mercado e ser considerado estatisticamente significativo.
+        A Estatística T traduz o gráfico acima em números: ela mede se o retorno gerado foi forte o suficiente para romper a barreira do ruído e ser considerado estatisticamente significativo.
         """)
         
-        # Cálculo do T-Stat considerando H0: Retorno Médio = 0
         t_stat = retorno_medio_mensal / (volatilidade_mensal / np.sqrt(n_meses))
-        
-        # Cálculo de quantos anos seriam necessários para t = 2.0 (95% de confiança)
         anos_necessarios = ((2.0 * volatilidade_mensal) / retorno_medio_mensal)**2 / 12 if retorno_medio_mensal > 0 else float('inf')
         
         c1, c2 = st.columns(2)
@@ -152,7 +149,7 @@ if arquivo_upload is not None:
         with c2:
             if retorno_medio_mensal > 0:
                 st.metric("Anos de histórico exigidos para provar habilidade (T=2.0)", f"{anos_necessarios:.1f} anos")
-                st.info("Isto mostra o tempo irrealista que a volatilidade exige para confirmar consistência.")
+                st.info("O modelo assume que o Alfa é zero. A volatilidade exige tempo irrealista para confirmar consistência.")
         
     except Exception as e:
         st.error(f"Erro ao processar o arquivo. Detalhe técnico: {e}")
