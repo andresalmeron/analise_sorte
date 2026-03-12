@@ -4,11 +4,12 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
+import re
 
 st.set_page_config(page_title="Sorte ou Habilidade?", layout="wide")
 
 def ler_arquivo(arquivo):
-    """Lê o arquivo de forma robusta, lidando com os cabeçalhos das plataformas."""
+    """Lê o arquivo de forma bruta."""
     if arquivo.name.endswith('.csv'):
         try:
             df = pd.read_csv(arquivo, sep=',', encoding='utf-8')
@@ -25,58 +26,35 @@ def ler_arquivo(arquivo):
         raise ValueError("O arquivo não possui duas colunas separadas para Data e Cota.")
     return df
 
-def limpar_numero_base_100(val):
-    """Limpa o número e já prepara para o ajuste de base."""
+def limpar_numero_trator(val):
+    """Ignora o Excel e arranca os números na força bruta com Regex."""
     if pd.isna(val): return np.nan
     if isinstance(val, (int, float)): return float(val)
-    val = str(val).strip()
     
-    # Tratamento de pontuação
-    if ',' in val and '.' in val:
-        if val.rfind(',') > val.rfind('.'):
-            val = val.replace('.', '').replace(',', '.')
+    # Remove qualquer coisa que não seja dígito, ponto, vírgula ou sinal negativo
+    val_str = str(val).strip()
+    val_limpo = re.sub(r'[^\d.,-]', '', val_str)
+    
+    if val_limpo == '': return np.nan
+    
+    # Resolve a treta do decimal
+    if ',' in val_limpo and '.' in val_limpo:
+        if val_limpo.rfind(',') > val_limpo.rfind('.'):
+            val_limpo = val_limpo.replace('.', '').replace(',', '.')
         else:
-            val = val.replace(',', '')
-    elif ',' in val:
-        val = val.replace(',', '.')
+            val_limpo = val_limpo.replace(',', '')
+    elif ',' in val_limpo:
+        val_limpo = val_limpo.replace(',', '.')
         
     try:
-        return float(val)
+        return float(val_limpo)
     except:
         return np.nan
 
-def processar_dados(df):
-    """Limpa a base, divide por 100 e calcula a série temporal corretamente."""
-    df = df.iloc[:, :2].copy()
-    df.columns = ['Data', 'Cota']
-    
-    df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-    df = df.dropna(subset=['Data']) 
-    
-    # Aplica a limpeza do valor bruto
-    df['Cota'] = df['Cota'].apply(limpar_numero_base_100)
-    df = df.dropna(subset=['Cota'])
-    
-    # ORDENAÇÃO E APLICAÇÃO DA BASE 100 (=B2/100) COMO SOLICITADO
-    df = df.sort_values('Data').reset_index(drop=True)
-    df['Cota_Base100'] = df['Cota'] / 100.0
-    
-    # Cálculo do Retorno sobre a base ajustada
-    df['Retorno'] = df['Cota_Base100'].pct_change()
-    
-    df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
-    
-    if len(df) == 0:
-        raise ValueError("Não sobrou nenhum dado válido após a limpeza.")
-        
-    return df
-
 def formatar_percentual_br(valor):
-    """Converte decimal para formato percentual brasileiro (ex: 15,30%)."""
     return f"{valor * 100:.2f}%".replace('.', ',')
 
 def formatar_decimal_br(valor):
-    """Converte float para formato decimal brasileiro."""
     return f"{valor:.2f}".replace('.', ',')
 
 st.title("Sorte ou Habilidade? O Teste da Aleatoriedade")
@@ -87,10 +65,39 @@ Esta ferramenta aplica testes estatísticos rigorosos para responder a uma pergu
 arquivo_upload = st.file_uploader("Faça o upload da planilha (Excel ou CSV da extração)", type=['csv', 'xlsx'])
 
 if arquivo_upload is not None:
-    try:
-        df_raw = ler_arquivo(arquivo_upload)
-        df = processar_dados(df_raw)
+    # 1. Leitura Bruta
+    df_raw = ler_arquivo(arquivo_upload)
+    
+    # 2. ABA DE DEPURAÇÃO: Mostra pro André o que diabos o Pandas leu
+    with st.expander("🛠️ Modo Depuração (Clique aqui para ver a leitura crua da base)"):
+        st.write("Visão das primeiras linhas antes de qualquer limpeza:")
+        st.dataframe(df_raw.head())
+        st.write(f"Total de linhas importadas: {len(df_raw)}")
 
+    try:
+        # 3. Isolamento e Limpeza
+        df = df_raw.iloc[:, :2].copy()
+        df.columns = ['Data', 'Cota']
+        
+        # O dayfirst=True força o Pandas a aceitar o padrão BR (DD/MM/AAAA)
+        df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
+        df['Cota'] = df['Cota'].apply(limpar_numero_trator)
+        
+        linhas_originais = len(df)
+        df = df.dropna(subset=['Data', 'Cota'])
+        
+        if len(df) == 0:
+            st.error(f"Puta que pariu! As {linhas_originais} linhas viraram poeira. O Pandas não conseguiu reconhecer nem as datas nem os números. Abra o 'Modo Depuração' acima para ver como os dados vieram corrompidos.")
+            st.stop()
+            
+        # 4. Cálculo
+        df = df.sort_values('Data').reset_index(drop=True)
+        df['Cota_Base100'] = df['Cota'] / 100.0
+        df['Retorno'] = df['Cota_Base100'].pct_change()
+        
+        df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
+        
+        # 5. Interface Gráfica
         n_meses = len(df)
         anos = n_meses / 12
         retorno_medio_mensal = df['Retorno'].mean()
@@ -140,17 +147,10 @@ if arquivo_upload is not None:
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             
-            # Formatação ajustada do eixo Y para prevenir notação científica
             ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, loc: "{:,}".format(int(x)).replace(',', '.')))
             
         st.pyplot(fig)
         plt.close(fig) 
-        
-        st.markdown("""
-        **Como interpretar a imagem:**
-        * A mancha cinza representa o **domínio da sorte**. Todos esses caminhos contêm exatamente as mesmas taxas de retorno mensais que o fundo teve, apenas embaralhadas.
-        * Se a linha azul não foge expressivamente da nuvem cinza (para cima), o resultado prático se deve fundamentalmente à exposição sistemática ao prêmio de risco ao longo do tempo.
-        """)
             
         st.divider()
 
@@ -180,4 +180,4 @@ if arquivo_upload is not None:
                 st.info("O modelo assume Alfa zero. Quanto maior a volatilidade, maior o tempo exigido para descartar a sorte.")
         
     except Exception as e:
-        st.error(f"Erro ao processar o arquivo. Detalhe técnico: {e}")
+        st.error(f"Erro fatal: {e}")
