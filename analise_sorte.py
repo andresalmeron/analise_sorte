@@ -113,14 +113,14 @@ if arquivo_upload is not None:
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.selectbox("1. Data Final:", options=opcoes_datas, key="end_select", on_change=update_dates)
+            st.selectbox("1. Data Inicial:", options=opcoes_datas, key="start_select", on_change=update_dates)
             
         with col2:
-            opcoes_atalho = ["Personalizado", "Último 1 ano", "Últimos 3 anos", "Últimos 5 anos", "Últimos 10 anos", "Desde o Início"]
-            st.selectbox("2. Janela Rápida:", options=opcoes_atalho, key="shortcut_select", on_change=update_shortcut)
-            
+            st.selectbox("2. Data Final:", options=opcoes_datas, key="end_select", on_change=update_dates)
+
         with col3:
-            st.selectbox("3. Data Inicial:", options=opcoes_datas, key="start_select", on_change=update_dates)
+            opcoes_atalho = ["Personalizado", "Último 1 ano", "Últimos 3 anos", "Últimos 5 anos", "Últimos 10 anos", "Desde o Início"]
+            st.selectbox("3. Janela Rápida:", options=opcoes_atalho, key="shortcut_select", on_change=update_shortcut)
             
         data_inicio_str = st.session_state.start_select
         data_fim_str = st.session_state.end_select
