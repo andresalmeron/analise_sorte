@@ -84,10 +84,6 @@ if arquivo_upload is not None:
         st.divider()
         st.subheader("Filtro de Período")
         
-        # ==========================================================
-        # O SLIDER DE TEMPO
-        # Padrão definido para 10 anos (ou o máximo, se o fundo for novo)
-        # ==========================================================
         max_anos_slider = int(np.ceil(anos_disponiveis))
         valor_padrao = min(10, max_anos_slider)
         
@@ -99,7 +95,6 @@ if arquivo_upload is not None:
             step=1
         )
         
-        # Recorta o dataframe com base na seleção do usuário
         meses_corte = anos_analise * 12
         df = df_completo.tail(meses_corte).reset_index(drop=True)
         
@@ -135,6 +130,12 @@ if arquivo_upload is not None:
             caminhos_acumulados = np.cumprod(simulacoes_retornos + 1, axis=0)
             caminhos_acumulados = np.vstack([np.ones(num_simulacoes), caminhos_acumulados]) 
             
+            # ==========================================================
+            # CÁLCULO DA MÉDIA E MEDIANA DAS SIMULAÇÕES
+            # ==========================================================
+            trajetoria_media = np.mean(caminhos_acumulados, axis=1)
+            trajetoria_mediana = np.median(caminhos_acumulados, axis=1)
+            
             trajetoria_real = np.cumprod(retornos_historicos + 1)
             trajetoria_real = np.insert(trajetoria_real, 0, 1.0)
             
@@ -142,9 +143,14 @@ if arquivo_upload is not None:
             eixo_x = np.arange(n_meses + 1)
             
             ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
+            
+            # Plota as métricas estatísticas sobrepostas
+            ax.plot(eixo_x, trajetoria_media, color='#E67E22', linestyle='--', linewidth=2.5, label='Média das Simulações')
+            ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana das Simulações (Cenário Base)')
+            
+            # Plota a linha real por último para ficar em evidência
             ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
             
-            # A Guilhotina Estatística mantém a escala limpa
             teto_simulado = np.percentile(caminhos_acumulados[-1, :], 99)
             teto_real = np.max(trajetoria_real)
             limite_superior = max(teto_simulado, teto_real) * 1.05 
@@ -163,6 +169,12 @@ if arquivo_upload is not None:
             
         st.pyplot(fig)
         plt.close(fig) 
+        
+        st.markdown("""
+        **A Diferença entre Média e Mediana:**
+        * Observe como a **Média (Laranja)** costuma descolar para cima da **Mediana (Vermelha)**. Isso ocorre pela assimetria dos juros compostos: os raríssimos cenários de "muita sorte" distorcem a média da amostra para cima.
+        * A **Mediana** representa o 50º percentil. É a âncora mais honesta para definir se o fundo apenas pegou "carona" no prêmio de risco do mercado ou se realmente entregou algo excepcional através do gestor.
+        """)
             
         st.divider()
 
