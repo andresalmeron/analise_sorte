@@ -5,6 +5,7 @@ import matplotlib
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import re
+from datetime import datetime
 
 st.set_page_config(page_title="Sorte ou Habilidade?", layout="wide")
 
@@ -73,30 +74,46 @@ if arquivo_upload is not None:
         df_completo['Cota'] = df_completo['Cota'].apply(limpar_numero)
         
         df_completo = df_completo.dropna(subset=['Data', 'Cota'])
-        
         df_completo = df_completo.sort_values('Data').reset_index(drop=True)
-        df_completo['Retorno'] = df_completo['Cota'].pct_change()
-        
-        df_completo = df_completo.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
-        
-        anos_disponiveis = len(df_completo) / 12
         
         st.divider()
         st.subheader("Filtro de Período")
         
-        max_anos_slider = int(np.ceil(anos_disponiveis))
-        valor_padrao = min(10, max_anos_slider)
+        # ==========================================================
+        # SELETOR DE DATAS MILIMÉTRICO
+        # ==========================================================
+        min_date = df_completo['Data'].min().date()
+        max_date = df_completo['Data'].max().date()
         
-        anos_analise = st.slider(
-            "Selecione o horizonte de análise (últimos X anos):",
-            min_value=1,
-            max_value=max_anos_slider,
-            value=valor_padrao,
-            step=1
+        # Padrão: Sugere os últimos 10 anos, ou o mínimo disponível
+        default_start = min_date
+        if (max_date - min_date).days > 3650:
+            default_start = pd.to_datetime(max_date) - pd.DateOffset(years=10)
+            default_start = default_start.date()
+            
+        datas_selecionadas = st.date_input(
+            "Selecione o período de análise (Início e Fim):",
+            value=(default_start, max_date),
+            min_value=min_date,
+            max_value=max_date
         )
         
-        meses_corte = anos_analise * 12
-        df = df_completo.tail(meses_corte).reset_index(drop=True)
+        if len(datas_selecionadas) != 2:
+            st.warning("Por favor, selecione uma data de início e uma data de fim para continuar.")
+            st.stop()
+            
+        data_inicio, data_fim = datas_selecionadas
+        
+        # Recorta o dataframe com base na seleção precisa
+        mask = (df_completo['Data'].dt.date >= data_inicio) & (df_completo['Data'].dt.date <= data_fim)
+        df = df_completo.loc[mask].reset_index(drop=True)
+        
+        if len(df) < 2:
+            st.error("O período selecionado precisa ter pelo menos 2 meses de dados para o cálculo de retorno.")
+            st.stop()
+            
+        df['Retorno'] = df['Cota'].pct_change()
+        df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
         
         n_meses = len(df)
         anos = n_meses / 12
@@ -117,7 +134,7 @@ if arquivo_upload is not None:
 
         st.subheader("2. O Multiverso do Azar: Simulação de Monte Carlo")
         st.markdown(f"""
-        Se o mercado é um passeio aleatório, o que acontece se pegarmos todos os retornos mensais dos últimos **{anos_analise} anos** e sortearmos a ordem deles 10.000 vezes? 
+        Se o mercado é um passeio aleatório, o que acontece se pegarmos todos os retornos mensais deste período específico ({data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}) e sortearmos a ordem deles 10.000 vezes? 
         """)
         
         num_simulacoes = 10000
@@ -130,13 +147,9 @@ if arquivo_upload is not None:
             caminhos_acumulados = np.cumprod(simulacoes_retornos + 1, axis=0)
             caminhos_acumulados = np.vstack([np.ones(num_simulacoes), caminhos_acumulados]) 
             
-            # ==========================================================
-            # CÁLCULO DAS MÉTRICAS ESTATÍSTICAS
-            # ==========================================================
             trajetoria_media = np.mean(caminhos_acumulados, axis=1)
             trajetoria_mediana = np.median(caminhos_acumulados, axis=1)
             
-            # A Guilhotina de Outliers (95,45% ~ 2 Desvios Padrão)
             limite_percentil = np.percentile(caminhos_acumulados[-1, :], 95.45)
             mascara_qualificados = caminhos_acumulados[-1, :] <= limite_percentil
             caminhos_qualificados = caminhos_acumulados[:, mascara_qualificados]
@@ -148,27 +161,22 @@ if arquivo_upload is not None:
             fig, ax = plt.subplots(figsize=(12, 6))
             eixo_x = np.arange(n_meses + 1)
             
-            # Plota a nuvem
             ax.plot(eixo_x, caminhos_acumulados[:, :500], color='lightgray', alpha=0.15)
             
-            # Plota as métricas
             ax.plot(eixo_x, trajetoria_media, color='#E67E22', linestyle='--', linewidth=2.5, label='Média Bruta (Distorcida por Outliers)')
             ax.plot(eixo_x, trajetoria_media_qualificada, color='#27AE60', linestyle='-.', linewidth=2.5, label='Média Qualificada (95,45% da Amostra)')
             ax.plot(eixo_x, trajetoria_mediana, color='#C0392B', linestyle=':', linewidth=2.5, label='Mediana (Cenário Base - P50)')
-            
-            # Plota a linha real
             ax.plot(eixo_x, trajetoria_real, color='#004488', linewidth=3, label='Trajetória Real do Fundo')
             
-            # Escala do Eixo Y focada na legibilidade
             teto_simulado = np.percentile(caminhos_acumulados[-1, :], 99)
             teto_real = np.max(trajetoria_real)
             limite_superior = max(teto_simulado, teto_real) * 1.05 
             
             ax.set_ylim(bottom=0, top=limite_superior)
             
-            ax.set_title(f'Trajetória Real vs. {num_simulacoes} Caminhos Aleatórios ({anos_analise} anos)', fontsize=14)
+            ax.set_title(f'Trajetória Real vs. {num_simulacoes} Caminhos Aleatórios', fontsize=14)
             ax.set_ylabel('Fator de Crescimento do Capital')
-            ax.set_xlabel('Meses Alocados')
+            ax.set_xlabel('Meses Alocados (No período selecionado)')
             ax.grid(axis='y', linestyle='--', alpha=0.5)
             ax.legend()
             ax.spines['top'].set_visible(False)
@@ -185,33 +193,6 @@ if arquivo_upload is not None:
         * **Média Qualificada (Verde):** Aqui removemos os ~4,5% universos de "ganho de loteria" (equivalente a cortar eventos acima de 2 desvios padrão). É um cenário-base muito mais justo e honesto para julgar a gestão.
         * **Mediana (Vermelha):** Representa exatamente o meio da amostra (P50). Se a linha azul do fundo orbita entre a Mediana e a Média Qualificada, o gestor entregou o prêmio de risco sistemático esperado, mas sem evidências de *stock picking* extraordinário.
         """)
-            
-        st.divider()
-
-        st.subheader("3. A Régua da Dúvida: Estatística T")
-        st.markdown("""
-        A Estatística T traduz o gráfico acima em números: ela mede se o retorno excedente gerado foi forte o suficiente para romper a barreira do ruído e ser considerado estatisticamente significativo na janela de tempo escolhida.
-        """)
-        
-        if volatilidade_mensal > 0:
-            t_stat = retorno_medio_mensal / (volatilidade_mensal / np.sqrt(n_meses))
-            anos_necessarios = ((2.0 * volatilidade_mensal) / retorno_medio_mensal)**2 / 12 if retorno_medio_mensal > 0 else float('inf')
-        else:
-            t_stat = 0
-            anos_necessarios = float('inf')
-            
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("T-Stat (Ouro > 2,0)", formatar_decimal_br(t_stat))
-            if t_stat >= 2.0:
-                st.success("Resultado Estatisticamente Significativo. Há indícios matemáticos de skill.")
-            else:
-                st.warning("Resultado NÃO Significativo. O retorno médio não rompeu o ruído de mercado.")
-                
-        with c2:
-            if retorno_medio_mensal > 0:
-                st.metric("Anos exigidos para provar habilidade (T=2,0)", f"{formatar_decimal_br(anos_necessarios)} anos")
-                st.info("O modelo assume Alfa zero. Quanto maior a volatilidade, maior o tempo exigido para descartar a sorte.")
         
     except Exception as e:
         st.error(f"Erro fatal: {e}")
