@@ -23,7 +23,7 @@ def ler_arquivo(arquivo):
         df = pd.read_excel(arquivo)
         
     if df.shape[1] < 2:
-        raise ValueError("O arquivo não possui duas colunas separadas para Data e Cota.")
+        raise ValueError("O arquivo não possui duas colunas úteis (Data e Cota).")
     return df
 
 def limpar_numero_trator(val):
@@ -31,13 +31,11 @@ def limpar_numero_trator(val):
     if pd.isna(val): return np.nan
     if isinstance(val, (int, float)): return float(val)
     
-    # Remove qualquer coisa que não seja dígito, ponto, vírgula ou sinal negativo
     val_str = str(val).strip()
     val_limpo = re.sub(r'[^\d.,-]', '', val_str)
     
     if val_limpo == '': return np.nan
     
-    # Resolve a treta do decimal
     if ',' in val_limpo and '.' in val_limpo:
         if val_limpo.rfind(',') > val_limpo.rfind('.'):
             val_limpo = val_limpo.replace('.', '').replace(',', '.')
@@ -67,37 +65,38 @@ arquivo_upload = st.file_uploader("Faça o upload da planilha (Excel ou CSV da e
 if arquivo_upload is not None:
     # 1. Leitura Bruta
     df_raw = ler_arquivo(arquivo_upload)
-    
-    # 2. ABA DE DEPURAÇÃO: Mostra pro André o que diabos o Pandas leu
-    with st.expander("🛠️ Modo Depuração (Clique aqui para ver a leitura crua da base)"):
-        st.write("Visão das primeiras linhas antes de qualquer limpeza:")
+
+    with st.expander("🛠️ Modo Depuração (Leitura Bruta)"):
         st.dataframe(df_raw.head())
-        st.write(f"Total de linhas importadas: {len(df_raw)}")
 
     try:
-        # 3. Isolamento e Limpeza
-        df = df_raw.iloc[:, :2].copy()
+        # =================================================================
+        # A BALA DE PRATA: Mata as colunas fantasmas "Unnamed" geradas 
+        # pelas exportações antes de selecionar a Data e a Cota.
+        # =================================================================
+        df = df_raw.loc[:, ~df_raw.columns.str.contains('^Unnamed')].copy()
+        
+        # Agora sim podemos pegar as duas primeiras colunas com segurança
+        df = df.iloc[:, :2]
         df.columns = ['Data', 'Cota']
         
-        # O dayfirst=True força o Pandas a aceitar o padrão BR (DD/MM/AAAA)
         df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
         df['Cota'] = df['Cota'].apply(limpar_numero_trator)
         
-        linhas_originais = len(df)
         df = df.dropna(subset=['Data', 'Cota'])
         
         if len(df) == 0:
-            st.error(f"Puta que pariu! As {linhas_originais} linhas viraram poeira. O Pandas não conseguiu reconhecer nem as datas nem os números. Abra o 'Modo Depuração' acima para ver como os dados vieram corrompidos.")
+            st.error("Erro após limpeza: Não sobraram dados. Verifique a planilha.")
             st.stop()
             
-        # 4. Cálculo
+        # Cálculo Seguro em Base 100
         df = df.sort_values('Data').reset_index(drop=True)
         df['Cota_Base100'] = df['Cota'] / 100.0
         df['Retorno'] = df['Cota_Base100'].pct_change()
         
         df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['Retorno']).reset_index(drop=True)
         
-        # 5. Interface Gráfica
+        # Estatísticas
         n_meses = len(df)
         anos = n_meses / 12
         retorno_medio_mensal = df['Retorno'].mean()
