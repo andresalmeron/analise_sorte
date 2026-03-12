@@ -10,10 +10,11 @@ st.set_page_config(page_title="Sorte ou Habilidade? (Qualificado)", layout="wide
 
 @st.cache_data(ttl=86400) # Mantém a base em cache por 24 horas para evitar lentidão
 def carregar_benchmark_default():
-    """Baixa a base do IBRX 100 diretamente do repositório no GitHub."""
-    # O link 'raw' aponta diretamente para o conteúdo do CSV com os espaços encodados
-    url_ibrx = "https://raw.githubusercontent.com/andresalmeron/analise_sorte/QUALIFICADO/preco%20-%20ibrx.csv"
-    return pd.read_csv(url_ibrx, sep=',', encoding='utf-8')
+    """Baixa a base do IBRX 100 (XLSX) diretamente do repositório no GitHub."""
+    # O link 'raw' aponta diretamente para o binário do arquivo Excel
+    url_ibrx = "https://raw.githubusercontent.com/andresalmeron/analise_sorte/QUALIFICADO/preco%20-%20ibrx.xlsx"
+    # O engine 'openpyxl' é necessário para ler arquivos .xlsx
+    return pd.read_excel(url_ibrx, engine='openpyxl')
 
 def ler_arquivo(arquivo, sep_default=';'):
     if getattr(arquivo, 'name', '').endswith('.csv') or (isinstance(arquivo, str) and arquivo.endswith('.csv')):
@@ -26,6 +27,7 @@ def ler_arquivo(arquivo, sep_default=';'):
             if hasattr(arquivo, 'seek'): arquivo.seek(0)
             df = pd.read_csv(arquivo, sep=sep_default, encoding='latin-1')
     else:
+        # Quando o upload for Excel, lê nativamente
         df = pd.read_excel(arquivo)
         
     if df.shape[1] < 2:
@@ -70,7 +72,7 @@ with col_up1:
 
 with col_up2:
     arquivo_bench = st.file_uploader("2. Upload do Benchmark Customizado (Opcional)", type=['csv', 'xlsx'])
-    st.caption("Se deixado em branco, usaremos o IBRX 100 padrão (via nuvem).")
+    st.caption("Se deixado em branco, usaremos o IBRX 100 padrão (via GitHub).")
 
 if arquivo_upload is not None:
     # --- Processamento do Fundo ---
@@ -89,7 +91,7 @@ if arquivo_upload is not None:
         try:
             df_bench_raw = carregar_benchmark_default()
         except Exception as e:
-            st.error(f"⚠️ Erro ao acessar a base do IBRX no GitHub. Verifique sua conexão ou se o arquivo existe no repositório.\nDetalhes técnicos: {e}")
+            st.error(f"⚠️ Erro ao acessar a base do IBRX no formato XLSX. Verifique sua conexão ou se o arquivo existe no repositório.\nDetalhes técnicos: {e}")
             st.stop()
     
     df_bench = df_bench_raw.loc[:, ~df_bench_raw.columns.str.contains('^Unnamed')].copy().iloc[:, :2]
@@ -100,7 +102,6 @@ if arquivo_upload is not None:
     df_bench['Retorno_Bench'] = df_bench['Preco_Bench'].pct_change()
 
     # --- Merge dos Dados ---
-    # É obrigatório que os retornos estejam alinhados pela exata mesma data
     df_completo = pd.merge(df_fundo[['Data', 'Retorno_Fundo']], df_bench[['Data', 'Retorno_Bench']], on='Data', how='inner')
     df_completo = df_completo.replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop=True)
     
