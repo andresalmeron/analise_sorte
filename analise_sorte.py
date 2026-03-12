@@ -81,34 +81,55 @@ if arquivo_upload is not None:
         st.divider()
         st.subheader("Filtro de Período")
         
+        # ==========================================================
+        # GERENCIAMENTO DE ESTADO E CALLBACKS (UX Fluida)
+        # ==========================================================
+        assinatura_arquivo = arquivo_upload.name + str(arquivo_upload.size)
+        if "file_hash" not in st.session_state or st.session_state.file_hash != assinatura_arquivo:
+            st.session_state.file_hash = assinatura_arquivo
+            st.session_state.end_select = opcoes_datas[-1]
+            st.session_state.start_select = opcoes_datas[max(0, len(opcoes_datas) - 121)]
+            st.session_state.shortcut_select = "Últimos 10 anos"
+
+        def update_shortcut():
+            """Gatilho disparado ao mexer na Janela Rápida"""
+            s = st.session_state.shortcut_select
+            end_i = opcoes_datas.index(st.session_state.end_select)
+            new_start_i = end_i
+            
+            if s == "Último 1 ano": new_start_i = max(0, end_i - 12)
+            elif s == "Últimos 3 anos": new_start_i = max(0, end_i - 36)
+            elif s == "Últimos 5 anos": new_start_i = max(0, end_i - 60)
+            elif s == "Últimos 10 anos": new_start_i = max(0, end_i - 120)
+            elif s == "Desde o Início": new_start_i = 0
+            
+            if s != "Personalizado":
+                st.session_state.start_select = opcoes_datas[new_start_i]
+
+        def update_dates():
+            """Gatilho disparado ao mexer manualmente nas datas"""
+            st.session_state.shortcut_select = "Personalizado"
+
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            idx_fim_default = len(opcoes_datas) - 1
-            data_fim_str = st.selectbox("1. Escolha o Fim:", options=opcoes_datas, index=idx_fim_default)
+            st.selectbox("1. Data Final:", options=opcoes_datas, key="end_select", on_change=update_dates)
             
-        idx_fim = opcoes_datas.index(data_fim_str)
-        
         with col2:
             opcoes_atalho = ["Personalizado", "Último 1 ano", "Últimos 3 anos", "Últimos 5 anos", "Últimos 10 anos", "Desde o Início"]
-            atalho = st.selectbox("2. Janela de Tempo:", options=opcoes_atalho, index=4) 
+            st.selectbox("2. Janela Rápida:", options=opcoes_atalho, key="shortcut_select", on_change=update_shortcut)
             
-        if atalho == "Último 1 ano": idx_ini_calc = max(0, idx_fim - 12)
-        elif atalho == "Últimos 3 anos": idx_ini_calc = max(0, idx_fim - 36)
-        elif atalho == "Últimos 5 anos": idx_ini_calc = max(0, idx_fim - 60)
-        elif atalho == "Últimos 10 anos": idx_ini_calc = max(0, idx_fim - 120)
-        elif atalho == "Desde o Início": idx_ini_calc = 0
-        else: idx_ini_calc = max(0, idx_fim - 120)
-
         with col3:
-            if atalho == "Personalizado":
-                data_inicio_str = st.selectbox("3. Escolha o Início:", options=opcoes_datas, index=idx_ini_calc)
-            else:
-                data_inicio_str = st.selectbox("3. Início (Automático):", options=[opcoes_datas[idx_ini_calc]], disabled=True)
-                
+            st.selectbox("3. Data Inicial:", options=opcoes_datas, key="start_select", on_change=update_dates)
+            
+        data_inicio_str = st.session_state.start_select
+        data_fim_str = st.session_state.end_select
+        
         idx_ini_real = opcoes_datas.index(data_inicio_str)
-        if idx_ini_real >= idx_fim:
-            st.error("⚠️ O Mês/Ano Inicial deve ser obrigatoriamente anterior ao Mês/Ano Final.")
+        idx_fim_real = opcoes_datas.index(data_fim_str)
+        
+        if idx_ini_real >= idx_fim_real:
+            st.error("⚠️ A Data Inicial deve ser obrigatoriamente anterior à Data Final.")
             st.stop()
         
         data_inicio = df_completo[df_completo['MesAno_Str'] == data_inicio_str]['Data'].min()
